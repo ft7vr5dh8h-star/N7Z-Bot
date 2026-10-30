@@ -11,7 +11,7 @@ intents.message_content = True
 intents.members = True
 intents.guilds = True
 
-GUILD_ID = 1563678057863057559  # آيدي سيرفرك الصحيح
+GUILD_ID = 1563678057863057559  # آيدي سيرفرك
 
 class TicketBot(commands.Bot):
     def __init__(self):
@@ -28,6 +28,59 @@ bot = TicketBot()
 SUPPORT_ROLE_ID = 1563683677819637782
 LOG_CHANNEL_ID = 1565578863277248655
 CATEGORY_ID = 1563682943333965884
+
+# ==================== 💬 الردود والأوامر السريعة (Chat Commands) ====================
+@bot.event
+async def on_message(message):
+    if message.author.bot:
+        return
+
+    content = message.content.strip()
+
+    # 1. ردود تلقائية
+    if content == ".":
+        await message.channel.send("ارحب")
+        return
+
+    if content == "السلام عليكم":
+        await message.channel.send("عليكم السلام")
+        return
+
+    # 2. أمر "بنعالي" للـ Kick (يتطلب صلاحية Kick Members)
+    if content.startswith("بنعالي"):
+        if not message.author.guild_permissions.kick_members:
+            await message.channel.send("❌ ما عندك صلاحية استخدام هذا الأمر!")
+            return
+
+        if message.mentions:
+            target = message.mentions[0]
+            try:
+                await target.kick(reason=f"تم الكيك بواسطة {message.author}")
+                await message.channel.send(f"👞 تم معاطاة {target.mention} بنعالي (Kick) بنجاح!")
+            except Exception as e:
+                await message.channel.send(f"❌ ما قدرت أعطيه كيك، ارفع رتبة البوت فوق رتبته.")
+        else:
+            await message.channel.send("⚠️ لازم تسوي منشن للشخص مع الأمر! مثال: `بنعالي @شخص`")
+        return
+
+    # 3. أمر "اسكت" للـ Timeout دقيقة (يتطلب صلاحية Moderate Members)
+    if content.startswith("اسكت"):
+        if not message.author.guild_permissions.moderate_members:
+            await message.channel.send("❌ ما عندك صلاحية استخدام هذا الأمر!")
+            return
+
+        if message.mentions:
+            target = message.mentions[0]
+            try:
+                await target.timeout(discord.utils.utcnow() + discord.timedelta(minutes=1), reason=f"اسكت بواسطة {message.author}")
+                await message.channel.send(f"🤫 تم إلقام {target.mention} تايم آوت لمدة دقيقة!")
+            except Exception as e:
+                await message.channel.send(f"❌ ما قدرت أعطيه تايم آوت، ارفع رتبة البوت فوق رتبته.")
+        else:
+            await message.channel.send("⚠️ لازم تسوي منشن للشخص مع الأمر! مثال: `اسكت @شخص`")
+        return
+
+    await bot.process_commands(message)
 
 # ==================== 🛡️ نظام الحماية (Anti-Nuke) ====================
 deleted_channels_tracker = defaultdict(list)
@@ -56,7 +109,7 @@ async def on_guild_channel_delete(channel):
                     pass
 
                 if log_channel:
-                    await log_channel.send(f"🚨 **تنبيه حماية (Anti-Nuke):** قام العضو {user.mention} بحذف أكثر من رومين في وقت قصير! تم عمل TimeOut له وحمايه السيرفر.")
+                    await log_channel.send(f"🚨 **تنبيه حماية (Anti-Nuke):** قام العضو {user.mention} بحذف أكثر من رومين في وقت قصير! تم عمل TimeOut له.")
                 break
     except Exception as e:
         print(f"Anti-nuke delete error: {e}")
@@ -76,12 +129,12 @@ async def on_guild_channel_create(channel):
             if len(created_channels_tracker[user.id]) >= 5:
                 log_channel = channel.guild.get_channel(LOG_CHANNEL_ID)
                 try:
-                    await user.timeout(discord.utils.utcnow() + discord.timedelta(hours=1), reason="حماية السيرفر: إنشاء رومات بشكل مريب (Spamming)!")
+                    await user.timeout(discord.utils.utcnow() + discord.timedelta(hours=1), reason="حماية السيرفر: إنشاء رومات بشكل مريب!")
                 except:
                     pass
 
                 if log_channel:
-                    await log_channel.send(f"🚨 **تنبيه حماية (Anti-Nuke):** قام العضو {user.mention} بإنشاء 5 رومات أو أكثر في دقيقة واحدة! تم إيقافه.")
+                    await log_channel.send(f"🚨 **تنبيه حماية (Anti-Nuke):** قام العضو {user.mention} بإنشاء 5 رومات أو أكثر في دقيقة! تم إيقافه.")
                 break
     except Exception as e:
         print(f"Anti-nuke create error: {e}")
@@ -91,7 +144,7 @@ async def on_guild_channel_create(channel):
 @app_commands.checks.has_permissions(administrator=True)
 @app_commands.describe(message="النص المراد إرساله للأعضاء")
 async def broadcast(interaction: discord.Interaction, message: str):
-    await interaction.response.send_message("⏳ جاري بدء إرسال البرودكاست لجميع الأعضاء في الخاص...", ephemeral=True)
+    await interaction.response.send_message("⏳ جاري بدء إرسال البرودكاست...", ephemeral=True)
     
     success = 0
     failed = 0
@@ -100,20 +153,18 @@ async def broadcast(interaction: discord.Interaction, message: str):
         if member.bot:
             continue
         try:
-            # إرسال الرسالة مضافاً إليها منشن العضو في نهاية الرسالة
             full_message = f"{message}\n\n{member.mention}"
             await member.send(full_message)
             success += 1
-            await asyncio.sleep(0.5)  # لتجنب حظر البوت من ديسكورد (Rate Limit)
+            await asyncio.sleep(0.5)
         except Exception:
             failed += 1
 
     log_channel = interaction.guild.get_channel(LOG_CHANNEL_ID)
     if log_channel:
-        await log_channel.send(f"📢 **تقرير البرودكاست:** تم الإرسال بواسطة {interaction.user.mention}\n✅ نجح الإرسال إلى: `{success}` عضو\n❌ فشل (المقفل الخاص): `{failed}` عضو")
+        await log_channel.send(f"📢 **تقرير البرودكاست:** تم الإرسال بواسطة {interaction.user.mention}\n✅ نجح الإرسال إلى: `{success}` عضو\n❌ فشل: `{failed}` عضو")
 
 # ==================== 🎫 أزرار وقوائم التذاكر ====================
-
 class RatingView(View):
     def __init__(self):
         super().__init__(timeout=None)
@@ -139,7 +190,7 @@ class TicketControlView(View):
 
     @discord.ui.button(label="إغلاق التذكرة 🔒", style=discord.ButtonStyle.red, custom_id="close_ticket")
     async def close_ticket(self, interaction: discord.Interaction, button: Button):
-        await interaction.response.send_message("جاري إغلاق التذكرة وتوثيق السجل...", ephemeral=True)
+        await interaction.response.send_message("جاري إغلاق التذكرة...", ephemeral=True)
         
         log_channel = interaction.guild.get_channel(LOG_CHANNEL_ID)
         if log_channel:
@@ -186,7 +237,7 @@ class TicketSelectView(View):
 
         embed = discord.Embed(
             title=f"تذكرة: {select.values[0]}",
-            description=f"أهلاً بك {interaction.user.mention}، يرجى كتابة مشكلتك وسيقوم فريق الدعم الفني بالرد عليك في أقرب وقت.",
+            description=f"أهلاً بك {interaction.user.mention}، يرجى كتابة مشكلتك وسيقوم فريق الدعم الفني بالرد عليك.",
             color=discord.Color.green()
         )
         await ticket_channel.send(content=f"{interaction.user.mention} | {support_role.mention}", embed=embed, view=TicketControlView())
@@ -195,12 +246,12 @@ class TicketSelectView(View):
         if log_channel:
             await log_channel.send(f"📩 **تذكرة جديدة:** قام {interaction.user.mention} بفتح تذكرة في قسم `{select.values[0]}` ({ticket_channel.mention})")
 
-@bot.tree.command(name="setup_tickets", description="إرسال لوحة تذاكر الدعم الفني في الروم الحالي")
+@bot.tree.command(name="setup_tickets", description="إرسال لوحة تذاكر الدعم الفني")
 @app_commands.checks.has_permissions(administrator=True)
 async def setup_tickets(interaction: discord.Interaction):
     embed = discord.Embed(
         title="مركز الدعم الفني 🎫",
-        description="يرجى اختيار القسم المناسب من القائمة أدناه لفتح تذكرة وسيتم مساعدتك فوراً.",
+        description="يرجى اختيار القسم المناسب من القائمة أدناه لفتح تذكرة.",
         color=discord.Color.blue()
     )
     await interaction.channel.send(embed=embed, view=TicketSelectView())
@@ -208,6 +259,6 @@ async def setup_tickets(interaction: discord.Interaction):
 
 @bot.event
 async def on_ready():
-    print(f'Logged in as {bot.user.name} - Ticket, Anti-Nuke & Broadcast System Ready!')
+    print(f'Logged in as {bot.user.name} - System Fully Updated & Ready!')
 
 bot.run(os.getenv('TOKEN'))
