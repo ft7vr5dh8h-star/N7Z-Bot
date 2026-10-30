@@ -1,22 +1,3 @@
-import discord
-from discord.ext import commands
-import os
-
-intents = discord.Intents.default()
-intents.message_content = True
-intents.members = True
-
-bot = commands.Bot(command_prefix="!", intents=intents)
-
-@bot.event
-async def on_ready():
-    print(f"البوت اشتغل بنجاح: {bot.user}")
-
-@bot.command()
-async def شغال؟(ctx):
-    await ctx.send("🏓 Pong! بوت N7Z شغال.")
-
-bot.run(os.getenv("TOKEN"))
 import os
 import discord
 from discord import app_commands
@@ -27,14 +8,18 @@ intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
 
+# ضع آيدي سيرفرك هنا لتظهر الأوامر فوراً
+GUILD_ID = 1563678057863057559 # آيدي السيرفر الخاص بك
+
 class TicketBot(commands.Bot):
     def __init__(self):
         super().__init__(command_prefix="!", intents=intents)
 
     async def setup_hook(self):
-        # مزامنة الأوامر مع ديسكورد لتظهر كـ Slash Commands
-        await self.tree.sync()
-        print("Slash commands synced successfully!")
+        guild = discord.Object(id=GUILD_ID)
+        self.tree.copy_global_to(guild=guild)
+        await self.tree.sync(guild=guild)
+        print("Slash commands synced instantly to your server!")
 
 bot = TicketBot()
 
@@ -144,4 +129,3 @@ async def on_ready():
     print(f'Logged in as {bot.user.name} - Slash Ticket System Ready!')
 
 bot.run(os.getenv('TOKEN'))
-
