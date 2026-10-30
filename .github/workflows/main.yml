@@ -1,34 +1,4 @@
-name: Run N7Z Bot
-
-on:
-  push:
-    branches: [ main ]
-  workflow_dispatch:
-
-jobs:
-  build:
-    runs-on: ubuntu-latest
-
-    steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
-
-    - name: Set up Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.10'
-
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install discord.py
-
-    - name: Run bot
-      env:
-        TOKEN: ${{ secrets.TOKEN }}
-      run: |
-        python main.py
-        import os
+import os
 import discord
 from discord import app_commands
 from discord.ext import commands
@@ -38,14 +8,18 @@ intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
 
+# ضع آيدي سيرفرك هنا لتظهر الأوامر فوراً
+GUILD_ID = 1563678057863057559  # 👈 استبدل الرقم بآيدي سيرفرك
+
 class TicketBot(commands.Bot):
     def __init__(self):
         super().__init__(command_prefix="!", intents=intents)
 
     async def setup_hook(self):
-        # مزامنة الأوامر مع ديسكورد لتظهر كـ Slash Commands
-        await self.tree.sync()
-        print("Slash commands synced successfully!")
+        guild = discord.Object(id=GUILD_ID)
+        self.tree.copy_global_to(guild=guild)
+        await self.tree.sync(guild=guild)
+        print("Slash commands synced instantly to your server!")
 
 bot = TicketBot()
 
@@ -155,4 +129,3 @@ async def on_ready():
     print(f'Logged in as {bot.user.name} - Slash Ticket System Ready!')
 
 bot.run(os.getenv('TOKEN'))
-
