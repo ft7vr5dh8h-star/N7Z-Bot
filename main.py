@@ -13,7 +13,7 @@ async def on_ready():
     print(f"البوت اشتغل بنجاح: {bot.user}")
 
 @bot.command()
-async def ping(ctx):
+async def شغال؟(ctx):
     await ctx.send("🏓 Pong! بوت N7Z شغال.")
 
 bot.run(os.getenv("TOKEN"))
