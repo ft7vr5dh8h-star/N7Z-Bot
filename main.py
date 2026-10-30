@@ -1,4 +1,6 @@
 import os
+import asyncio
+from collections import defaultdict
 import discord
 from discord import app_commands
 from discord.ext import commands
@@ -7,6 +9,7 @@ from discord.ui import Button, View, Select
 intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
+intents.guilds = True
 
 GUILD_ID = 1563678057863057559  # آيدي سيرفرك الصحيح
 
@@ -25,6 +28,91 @@ bot = TicketBot()
 SUPPORT_ROLE_ID = 1563683677819637782
 LOG_CHANNEL_ID = 1565578863277248655
 CATEGORY_ID = 1563682943333965884
+
+# ==================== 🛡️ نظام الحماية (Anti-Nuke) ====================
+deleted_channels_tracker = defaultdict(list)
+created_channels_tracker = defaultdict(list)
+
+@bot.event
+async def on_guild_channel_delete(channel):
+    if channel.category and channel.category.id == CATEGORY_ID:
+        return
+
+    try:
+        async for entry in channel.guild.audit_logs(limit=1, action=discord.AuditLogAction.channel_delete):
+            user = entry.user
+            if user.bot or user.guild_permissions.administrator:
+                return
+
+            now = asyncio.get_event_loop().time()
+            deleted_channels_tracker[user.id] = [t for t in deleted_channels_tracker[user.id] if now - t < 60]
+            deleted_channels_tracker[user.id].append(now)
+
+            if len(deleted_channels_tracker[user.id]) >= 2:
+                log_channel = channel.guild.get_channel(LOG_CHANNEL_ID)
+                try:
+                    await user.timeout(discord.utils.utcnow() + discord.timedelta(hours=1), reason="حماية السيرفر: محاولة حذف رومات جماعية!")
+                except:
+                    pass
+
+                if log_channel:
+                    await log_channel.send(f"🚨 **تنبيه حماية (Anti-Nuke):** قام العضو {user.mention} بحذف أكثر من رومين في وقت قصير! تم عمل TimeOut له وحمايه السيرفر.")
+                break
+    except Exception as e:
+        print(f"Anti-nuke delete error: {e}")
+
+@bot.event
+async def on_guild_channel_create(channel):
+    try:
+        async for entry in channel.guild.audit_logs(limit=1, action=discord.AuditLogAction.channel_create):
+            user = entry.user
+            if user.bot or user.guild_permissions.administrator:
+                return
+
+            now = asyncio.get_event_loop().time()
+            created_channels_tracker[user.id] = [t for t in created_channels_tracker[user.id] if now - t < 60]
+            created_channels_tracker[user.id].append(now)
+
+            if len(created_channels_tracker[user.id]) >= 5:
+                log_channel = channel.guild.get_channel(LOG_CHANNEL_ID)
+                try:
+                    await user.timeout(discord.utils.utcnow() + discord.timedelta(hours=1), reason="حماية السيرفر: إنشاء رومات بشكل مريب (Spamming)!")
+                except:
+                    pass
+
+                if log_channel:
+                    await log_channel.send(f"🚨 **تنبيه حماية (Anti-Nuke):** قام العضو {user.mention} بإنشاء 5 رومات أو أكثر في دقيقة واحدة! تم إيقافه.")
+                break
+    except Exception as e:
+        print(f"Anti-nuke create error: {e}")
+
+# ==================== 📢 أمر البرودكاست في الخاص (Broadcast) ====================
+@bot.tree.command(name="broadcast", description="إرسال برودكاست في الخاص لجميع أعضاء السيرفر مع منشن")
+@app_commands.checks.has_permissions(administrator=True)
+@app_commands.describe(message="النص المراد إرساله للأعضاء")
+async def broadcast(interaction: discord.Interaction, message: str):
+    await interaction.response.send_message("⏳ جاري بدء إرسال البرودكاست لجميع الأعضاء في الخاص...", ephemeral=True)
+    
+    success = 0
+    failed = 0
+    
+    for member in interaction.guild.members:
+        if member.bot:
+            continue
+        try:
+            # إرسال الرسالة مضافاً إليها منشن العضو في نهاية الرسالة
+            full_message = f"{message}\n\n{member.mention}"
+            await member.send(full_message)
+            success += 1
+            await asyncio.sleep(0.5)  # لتجنب حظر البوت من ديسكورد (Rate Limit)
+        except Exception:
+            failed += 1
+
+    log_channel = interaction.guild.get_channel(LOG_CHANNEL_ID)
+    if log_channel:
+        await log_channel.send(f"📢 **تقرير البرودكاست:** تم الإرسال بواسطة {interaction.user.mention}\n✅ نجح الإرسال إلى: `{success}` عضو\n❌ فشل (المقفل الخاص): `{failed}` عضو")
+
+# ==================== 🎫 أزرار وقوائم التذاكر ====================
 
 class RatingView(View):
     def __init__(self):
@@ -120,6 +208,6 @@ async def setup_tickets(interaction: discord.Interaction):
 
 @bot.event
 async def on_ready():
-    print(f'Logged in as {bot.user.name} - Slash Ticket System Ready!')
+    print(f'Logged in as {bot.user.name} - Ticket, Anti-Nuke & Broadcast System Ready!')
 
 bot.run(os.getenv('TOKEN'))
