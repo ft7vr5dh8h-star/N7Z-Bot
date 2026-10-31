@@ -23,8 +23,8 @@ jobs:
         python -m pip install --upgrade pip
         pip install discord.py
 
-    - name: Run bot
-      env:
-        TOKEN: ${{ secrets.TOKEN }}
-      run: |
-        python main.py
+ -  @bot.event
+async def on_ready():
+    print(f'Logged in as {bot.user.name} - All Systems Ready!')
+
+bot.run(os.getenv('TOKEN'))
