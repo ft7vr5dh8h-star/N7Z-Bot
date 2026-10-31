@@ -11,7 +11,7 @@ intents.message_content = True
 intents.members = True
 intents.guilds = True
 
-GUILD_ID = 1563678057863057559  # آيدي سيرفرك
+GUILD_ID = 156367805786305759  # آيدي سيرفرك
 
 class TicketBot(commands.Bot):
     def __init__(self):
@@ -29,6 +29,60 @@ SUPPORT_ROLE_ID = 1563683677819637782
 LOG_CHANNEL_ID = 1565578863277248655
 CATEGORY_ID = 1563682943333965884
 
+# ==================== 🛠️ أمر بناء السيرفر وتنسيق الرومات تلقائياً ====================
+@bot.tree.command(name="setup_server", description="إنشاء جميع الأقسام والرومات الموجودة في التصميم تلقائياً")
+@app_commands.checks.has_permissions(administrator=True)
+async def setup_server(interaction: discord.Interaction):
+    await interaction.response.send_message("⏳ جاري إنشاء الأقسام والرومات وترتيبها بدقة، يرجى الانتظار...", ephemeral=True)
+    guild = interaction.guild
+
+    try:
+        # 1. قسم تقديم أدمن عيال
+        cat1 = await guild.create_category("تقديم أدمن عيال")
+        await guild.create_text_channel("العيال-أدمن-تقديم", category=cat1)
+
+        # 2. قسم تقديم أدمن بنات
+        cat2 = await guild.create_category("تقديم أدمن بنات")
+        await guild.create_text_channel("البنات-ادمن-تقديم", category=cat2)
+
+        # 3. قسم INFORMATION
+        cat3 = await guild.create_category("📌 • INFORMATION")
+        await guild.create_text_channel("📜-rules", category=cat3)
+        await guild.create_text_channel("👋-welcome", category=cat3)
+        await guild.create_text_channel("📰-news", category=cat3)
+        await guild.create_text_channel("🤝-partners", category=cat3)
+        await guild.create_text_channel("🔗-links", category=cat3)
+        await guild.create_text_channel("🚀-boosters", category=cat3)
+        await guild.create_text_channel("👑-server-admins", category=cat3)
+
+        # 4. قسم CHAT ROOMS
+        cat4 = await guild.create_category("💬 • CHAT ROOMS")
+        await guild.create_text_channel("💬-chat", category=cat4)
+        await guild.create_text_channel("🔥-streak", category=cat4)
+        await guild.create_text_channel("🎮-klg", category=cat4)
+        await guild.create_text_channel("🍷-ajr", category=cat4)
+        await guild.create_text_channel("🏦-bank", category=cat4)
+        await guild.create_text_channel("✍️-5a6r", category=cat4)
+        await guild.create_text_channel("✍️-us", category=cat4)
+
+        # 5. قسم TICKETS
+        cat5 = await guild.create_category("🎫 • TICKETS")
+        await guild.create_text_channel("🎫-tickets", category=cat5)
+        await guild.create_text_channel("🔒-3", category=cat5)
+
+        # 6. قسم VOICE
+        cat6 = await guild.create_category("🔊 • VOICE")
+        await guild.create_voice_channel("VOICE 1", category=cat6)
+        await guild.create_voice_channel("VOICE 2", category=cat6)
+        await guild.create_voice_channel("VOICE 3", category=cat6)
+        await guild.create_voice_channel("VOICE 4", category=cat6)
+        await guild.create_voice_channel("VOICE 5", category=cat6)
+        await guild.create_voice_channel("💤 • AFK", category=cat6)
+
+        await interaction.followup.send("✅ تم إنشاء جميع الأقسام والرومات بنجاح وتطابق التصميم تماماً! 🎉", ephemeral=True)
+    except Exception as e:
+        await interaction.followup.send(f"❌ حدث خطأ أثناء إنشاء الرومات: {e}", ephemeral=True)
+
 # ==================== 💬 الردود والأوامر السريعة (Chat Commands) ====================
 @bot.event
 async def on_message(message):
@@ -37,7 +91,6 @@ async def on_message(message):
 
     content = message.content.strip()
 
-    # 1. ردود تلقائية
     if content == ".":
         await message.channel.send("ارحب")
         return
@@ -46,7 +99,6 @@ async def on_message(message):
         await message.channel.send("عليكم السلام")
         return
 
-    # 2. أمر "حذف" - يحذف جميع رومات وشاتات السيرفر (خاص بمالك السيرفر فقط)
     if content == "حذف":
         if message.author.id != message.guild.owner_id:
             await message.channel.send("❌ هذا الأمر خاص بمالك السيرفر (Owner) فقط!")
@@ -60,7 +112,6 @@ async def on_message(message):
                 pass
         return
 
-    # 3. أمر "بنعالي" للـ Kick
     if content.startswith("بنعالي"):
         if not message.author.guild_permissions.kick_members:
             await message.channel.send("❌ ما عندك صلاحية استخدام هذا الأمر!")
@@ -77,7 +128,6 @@ async def on_message(message):
             await message.channel.send("⚠️ لازم تسوي منشن للشخص مع الأمر! مثال: `بنعالي @شخص`")
         return
 
-    # 4. أمر "اسكت" للـ Timeout دقيقة
     if content.startswith("اسكت"):
         if not message.author.guild_permissions.moderate_members:
             await message.channel.send("❌ ما عندك صلاحية استخدام هذا الأمر!")
@@ -273,6 +323,6 @@ async def setup_tickets(interaction: discord.Interaction):
 
 @bot.event
 async def on_ready():
-    print(f'Logged in as {bot.user.name} - All Systems Ready!')
+    print(f'Logged in as {bot.user.name} - Server Setup & All Systems Ready!')
 
 bot.run(os.getenv('TOKEN'))
