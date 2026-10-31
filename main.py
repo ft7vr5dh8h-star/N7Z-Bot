@@ -11,7 +11,7 @@ intents.message_content = True
 intents.members = True
 intents.guilds = True
 
-GUILD_ID = 1563678057863057559  # آيدي سيرفرك
+GUILD_ID = 156367805786305759  # آيدي سيرفرك
 
 class TicketBot(commands.Bot):
     def __init__(self):
@@ -46,7 +46,21 @@ async def on_message(message):
         await message.channel.send("عليكم السلام")
         return
 
-    # 2. أمر "بنعالي" للـ Kick (يتطلب صلاحية Kick Members)
+    # 2. أمر "حذف" - يحذف جميع رومات وشاتات السيرفر (خاص بمالك السيرفر فقط للسلامة)
+    if content == "حذف":
+        if message.author.id != message.guild.owner_id:
+            await message.channel.send("❌ هذا الأمر خاص بمالك السيرفر (Owner) فقط!")
+            return
+
+        await message.channel.send("⚠️ جاري حذف جميع رومات وشاتات السيرفر بناءً على طلبك...")
+        for channel in message.guild.channels:
+            try:
+                await channel.delete()
+            except:
+                pass
+        return
+
+    # 3. أمر "بنعالي" للـ Kick
     if content.startswith("بنعالي"):
         if not message.author.guild_permissions.kick_members:
             await message.channel.send("❌ ما عندك صلاحية استخدام هذا الأمر!")
@@ -57,13 +71,13 @@ async def on_message(message):
             try:
                 await target.kick(reason=f"تم الكيك بواسطة {message.author}")
                 await message.channel.send(f"👞 تم معاطاة {target.mention} بنعالي (Kick) بنجاح!")
-            except Exception as e:
-                await message.channel.send(f"❌ ما قدرت أعطيه كيك، ارفع رتبة البوت فوق رتبته.")
+            except:
+                await message.channel.send("❌ ما قدرت أعطيه كيك، ارفع رتبة البوت فوق رتبته.")
         else:
             await message.channel.send("⚠️ لازم تسوي منشن للشخص مع الأمر! مثال: `بنعالي @شخص`")
         return
 
-    # 3. أمر "اسكت" للـ Timeout دقيقة (يتطلب صلاحية Moderate Members)
+    # 4. أمر "اسكت" للـ Timeout دقيقة
     if content.startswith("اسكت"):
         if not message.author.guild_permissions.moderate_members:
             await message.channel.send("❌ ما عندك صلاحية استخدام هذا الأمر!")
@@ -74,8 +88,8 @@ async def on_message(message):
             try:
                 await target.timeout(discord.utils.utcnow() + discord.timedelta(minutes=1), reason=f"اسكت بواسطة {message.author}")
                 await message.channel.send(f"🤫 تم إلقام {target.mention} تايم آوت لمدة دقيقة!")
-            except Exception as e:
-                await message.channel.send(f"❌ ما قدرت أعطيه تايم آوت، ارفع رتبة البوت فوق رتبته.")
+            except:
+                await message.channel.send("❌ ما قدرت أعطيه تايم آوت، ارفع رتبة البوت فوق رتبته.")
         else:
             await message.channel.send("⚠️ لازم تسوي منشن للشخص مع الأمر! مثال: `اسكت @شخص`")
         return
@@ -259,6 +273,6 @@ async def setup_tickets(interaction: discord.Interaction):
 
 @bot.event
 async def on_ready():
-    print(f'Logged in as {bot.user.name} - System Fully Updated & Ready!')
+    print(f'Logged in as {bot.user.name} - All Systems Ready!')
 
 bot.run(os.getenv('TOKEN'))
