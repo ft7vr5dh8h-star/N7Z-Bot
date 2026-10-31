@@ -11,7 +11,7 @@ intents.message_content = True
 intents.members = True
 intents.guilds = True
 
-GUILD_ID = 156367805786305759  # آيدي سيرفرك
+GUILD_ID = 1563678057863057559  # آيدي سيرفرك
 
 class TicketBot(commands.Bot):
     def __init__(self):
