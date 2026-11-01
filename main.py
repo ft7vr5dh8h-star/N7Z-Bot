@@ -29,15 +29,36 @@ SUPPORT_ROLE_ID = 1563683677819637782
 LOG_CHANNEL_ID = 1565578863277248655
 CATEGORY_ID = 1563682943333965884
 
-# ==================== 🛡️ أمر ضبط وتأمين الصلاحيات للرتب ====================
-@bot.tree.command(name="setup_roles", description="ضبط وتأمين صلاحيات الرتب العامة وإزالة الصلاحيات القوية")
+# قائمة آيديات الرتب التي تود تأمينها وضبط صلاحياتها
+TARGET_ROLE_IDS = [
+    1563693370436751441,
+    1563683211266228374,
+    1563749745116053605,
+    1563693266120216619,
+    1563690204932481165,
+    1563690329234866196,
+    1563693109903097886,
+    1563692936368234599,
+    1563690405101310142,
+    1563690490346348604,
+    1563692859377590342,
+    1563693032715591770,
+    1563682396958621848,
+    1566075985022029826
+]
+
+# ==================== 🛡️ أمر ضبط وتأمين صلاحيات الرتب المحددة ====================
+@bot.tree.command(name="setup_roles", description="تأمين وضبط صلاحيات الرتب المحددة وإزالة الصلاحيات القوية")
 @app_commands.checks.has_permissions(administrator=True)
 async def setup_roles(interaction: discord.Interaction):
-    await interaction.response.send_message("⏳ جاري ضبط صلاحيات الرتب وتأمين السيرفر...", ephemeral=True)
+    await interaction.response.send_message("⏳ جاري فحص الرتب المحددة وتأمين صلاحياتها...", ephemeral=True)
     guild = interaction.guild
 
+    success_count = 0
+    not_found_count = 0
+
+    # 1. تأمين رتبة Everyone كخطوة أساسية أولى
     try:
-        # ضبط الصلاحيات القياسية لرتبة Everyone لغلق الثغرات ومنع الصلاحيات الخطيرة
         default_role = guild.default_role
         await default_role.edit(permissions=discord.Permissions(
             send_messages=True,
@@ -46,16 +67,45 @@ async def setup_roles(interaction: discord.Interaction):
             speak=True,
             add_reactions=True,
             read_message_history=True,
-            kick_members=False,      # منع الكيك
-            ban_members=False,       # منع الباند
-            manage_roles=False,      # منع تعديل الرتب
-            manage_channels=False,   # منع تعديل الرومات
-            administrator=False      # منع الصلاحية الكاملة
+            kick_members=False,
+            ban_members=False,
+            manage_roles=False,
+            manage_channels=False,
+            administrator=False
         ))
-
-        await interaction.followup.send("✅ تم ضبط وتأمين صلاحيات الرتب بنجاح وأصبحت خالية من الصلاحيات الخطيرة! 🛡️", ephemeral=True)
     except Exception as e:
-        await interaction.followup.send(f"❌ حدث خطأ أثناء ضبط الرتب: {e}", ephemeral=True)
+        print(f"Error updating @everyone: {e}")
+
+    # 2. المرور على كافة الآيديات المحددة وتعديل صلاحياتها
+    for role_id in TARGET_ROLE_IDS:
+        role = guild.get_role(role_id)
+        if role:
+            try:
+                await role.edit(permissions=discord.Permissions(
+                    send_messages=True,
+                    read_messages=True,
+                    connect=True,
+                    speak=True,
+                    add_reactions=True,
+                    read_message_history=True,
+                    kick_members=False,      # منع الكيك
+                    ban_members=False,       # منع الباند
+                    manage_roles=False,      # منع تعديل الرتب
+                    manage_channels=False,   # منع تعديل الرومات
+                    administrator=False      # منع الصلاحية الكاملة
+                ))
+                success_count += 1
+            except Exception as e:
+                print(f"Failed to update role {role_id}: {e}")
+        else:
+            not_found_count += 1
+
+    await interaction.followup.send(
+        f"✅ تم الانتهاء من تأمين الرتب بنجاح!\n"
+        f"🔒 تم ضبط وصيانة: `{success_count}` رتبة.\n"
+        (f"⚠️ لم يتم العثور على `{not_found_count}` رتبة في السيرفر (تأكد من صحة الآيديات)." if not_found_count > 0 else ""),
+        ephemeral=True
+    )
 
 # ==================== 💬 الردود والأوامر السريعة (Chat Commands) ====================
 @bot.event
@@ -284,6 +334,6 @@ async def setup_tickets(interaction: discord.Interaction):
 
 @bot.event
 async def on_ready():
-    print(f'Logged in as {bot.user.name} - Roles Setup & All Systems Ready!')
+    print(f'Logged in as {bot.user.name} - Specific Roles Security Setup Ready!')
 
 bot.run(os.getenv('TOKEN'))
