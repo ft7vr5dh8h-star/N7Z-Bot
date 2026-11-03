@@ -5,12 +5,14 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 from discord.ui import Button, View, Select
+import urllib.request
+import json
 
 intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
 intents.guilds = True
-intents.reactions = True  # مفعل لتفاعل الرياكشنات
+intents.reactions = True
 
 GUILD_ID = 1563678057863057559  # آيدي سيرفرك
 
@@ -30,7 +32,6 @@ SUPPORT_ROLE_ID = 1563683677819637782
 LOG_CHANNEL_ID = 1565578863277248655
 CATEGORY_ID = 1563682943333965884
 
-# قائمة آيديات الرتب التي تود تأمينها
 TARGET_ROLE_IDS = [
     1563693370436751441, 1563683211266228374, 1563749745116053605,
     1563693266120216619, 1563690204932481165, 1563690329234866196,
@@ -39,13 +40,38 @@ TARGET_ROLE_IDS = [
     1563682396958621848, 1566075985022029826
 ]
 
-# ربط رسائل الرياكشن بالرتب (سيتم حفظها هنا، وتستطيع تعديل آيدي الرول والإيموجي)
-# ضع هنا آيدي الرول الذي تريد إعطاءه عند الضغط على إيموجي النار 🔥 مثلاً
-REACTION_ROLES = {
-    # مثال: "🔥": 1563693370436751441 (استبدله بآيدي الرول المطلوب)
-}
+REACTION_ROLES = {}
 
-# ==================== 🎭 أمر إرسال رسالة الرولات التلقائية (Reaction Roles) ====================
+# ==================== 🤖 دالة الذكاء الاصطناعي (AI Response) ====================
+def ask_ai(prompt: str) -> str:
+    try:
+        url = f"https://text.pollinations.ai/{urllib.parse.quote(prompt)}"
+        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+        with urllib.request.urlopen(req, timeout=10) as response:
+            result = response.read().decode('utf-8')
+            return result if result else "عذراً، لم أستطع معالجة طلبك حالياً."
+    except Exception as e:
+        return "حدث خطأ أثناء التواصل مع سيرفر الذكاء الاصطناعي."
+
+@bot.tree.command(name="ai", description="التحدث مع الذكاء الاصطناعي والسؤال عن أي شيء")
+@app_commands.describe(prompt="اكتب سؤالك أو طلبك هنا")
+async def ai_command(interaction: discord.Interaction, prompt: str):
+    await interaction.response.defer(thinking=True)
+    loop = asyncio.get_event_loop()
+    reply = await loop.run_in_executor(None, ask_ai, prompt)
+    
+    if len(reply) > 2000:
+        reply = reply[:1990] + "..."
+        
+    embed = discord.Embed(
+        title="🤖 إجابة الذكاء الاصطناعي",
+        description=reply,
+        color=discord.Color.purple()
+    )
+    embed.set_footer(text=f"السؤال: {prompt[:50]}")
+    await interaction.followup.send(embed=embed)
+
+# ==================== 🎭 أمر رولات الرياكشن ====================
 @bot.tree.command(name="setup_reaction_roles", description="إرسال رسالة رولات الرياكشن التلقائية")
 @app_commands.checks.has_permissions(administrator=True)
 @app_commands.describe(role="الرتبة التي ستعطى للعضو", emoji="الإيموجي المطلوب (مثال: 🔥)")
@@ -55,25 +81,18 @@ async def setup_reaction_roles(interaction: discord.Interaction, role: discord.R
         description=f"للحصول على رول {role.mention} ، اضغط على التفاعل ({emoji}) أدناه وسيتم منحك إياها تلقائياً! 👆",
         color=discord.Color.gold()
     )
-    
-    # إرسال الرسالة في الروم الحالي
     message = await interaction.channel.send(embed=embed)
-    
-    # إضافة التفاعل للرسالة تلقائياً
     try:
         await message.add_reaction(emoji)
-        # حفظ الربط (الإيموجي مع آيدي الرول والرسالة)
         REACTION_ROLES[emoji] = role.id
         await interaction.response.send_message("✅ تم إنشاء رسالة رولات الرياكشن بنجاح!", ephemeral=True)
     except Exception as e:
-        await interaction.response.send_message(f"❌ حدث خطأ (تأكد أن البوت يمتلك صلاحية إضافة تفاعلات): {e}", ephemeral=True)
+        await interaction.response.send_message(f"❌ حدث خطأ: {e}", ephemeral=True)
 
-# ==================== 📥 نظام منح الرول عند إضافة الرياكشن ====================
 @bot.event
 async def on_raw_reaction_add(payload):
     if payload.member.bot:
         return
-    
     emoji = str(payload.emoji)
     if emoji in REACTION_ROLES:
         guild = bot.get_guild(payload.guild_id)
@@ -85,7 +104,6 @@ async def on_raw_reaction_add(payload):
                 except Exception as e:
                     print(f"Failed to add role via reaction: {e}")
 
-# ==================== 📤 نظام إزالة الرول عند إزالة الرياكشن ====================
 @bot.event
 async def on_raw_reaction_remove(payload):
     emoji = str(payload.emoji)
@@ -101,16 +119,14 @@ async def on_raw_reaction_remove(payload):
                     except Exception as e:
                         print(f"Failed to remove role via reaction: {e}")
 
-# ==================== 🛡️ أمر ضبط وتأمين صلاحيات الرتب المحددة ====================
+# ==================== 🛡️ أمر تأمين الرتب ====================
 @bot.tree.command(name="setup_roles", description="تأمين وضبط صلاحيات الرتب المحددة وإزالة الصلاحيات القوية")
 @app_commands.checks.has_permissions(administrator=True)
 async def setup_roles(interaction: discord.Interaction):
     await interaction.response.send_message("⏳ جاري فحص الرتب المحددة وتأمين صلاحياتها...", ephemeral=True)
     guild = interaction.guild
-
     success_count = 0
-    not_found_count = 0
-
+    
     try:
         default_role = guild.default_role
         await default_role.edit(permissions=discord.Permissions(
@@ -133,22 +149,28 @@ async def setup_roles(interaction: discord.Interaction):
                 success_count += 1
             except Exception as e:
                 print(f"Failed to update role {role_id}: {e}")
-        else:
-            not_found_count += 1
 
-    await interaction.followup.send(
-        f"✅ تم الانتهاء من تأمين الرتب بنجاح!\n"
-        f"🔒 تم ضبط وصيانة: `{success_count}` رتبة.",
-        ephemeral=True
-    )
+    await interaction.followup.send(f"✅ تم الانتهاء من تأمين الرتب بنجاح!\n🔒 تم ضبط: `{success_count}` رتبة.", ephemeral=True)
 
-# ==================== 💬 الردود والأوامر السريعة (Chat Commands) ====================
+# ==================== 💬 الردود والأوامر السريعة والمنشن ====================
 @bot.event
 async def on_message(message):
     if message.author.bot:
         return
 
     content = message.content.strip()
+
+    # الرد بالذكاء الاصطناعي عند منشن البوت
+    if bot.user.mentioned_in(message) and not message.mention_everyone:
+        clean_content = content.replace(f'<@{bot.user.id}>', '').replace(f'<@!{bot.user.id}>', '').strip()
+        if clean_content:
+            async with message.channel.typing():
+                loop = asyncio.get_event_loop()
+                ai_reply = await loop.run_in_executor(None, ask_ai, clean_content)
+                if len(ai_reply) > 2000:
+                    ai_reply = ai_reply[:1990] + "..."
+                await message.reply(ai_reply)
+            return
 
     if content == ".":
         await message.channel.send("ارحب")
@@ -162,7 +184,6 @@ async def on_message(message):
         if not message.author.guild_permissions.kick_members:
             await message.channel.send("❌ ما عندك صلاحية استخدام هذا الأمر!")
             return
-
         if message.mentions:
             target = message.mentions[0]
             try:
@@ -178,7 +199,6 @@ async def on_message(message):
         if not message.author.guild_permissions.moderate_members:
             await message.channel.send("❌ ما عندك صلاحية استخدام هذا الأمر!")
             return
-
         if message.mentions:
             target = message.mentions[0]
             try:
@@ -249,16 +269,14 @@ async def on_guild_channel_create(channel):
     except Exception as e:
         print(f"Anti-nuke create error: {e}")
 
-# ==================== 📢 أمر البرودكاست في الخاص (Broadcast) ====================
+# ==================== 📢 أمر البرودكاست ====================
 @bot.tree.command(name="broadcast", description="إرسال برودكاست في الخاص لجميع أعضاء السيرفر مع منشن")
 @app_commands.checks.has_permissions(administrator=True)
 @app_commands.describe(message="النص المراد إرساله للأعضاء")
 async def broadcast(interaction: discord.Interaction, message: str):
     await interaction.response.send_message("⏳ جاري بدء إرسال البرودكاست...", ephemeral=True)
-    
     success = 0
     failed = 0
-    
     for member in interaction.guild.members:
         if member.bot:
             continue
@@ -301,16 +319,13 @@ class TicketControlView(View):
     @discord.ui.button(label="إغلاق التذكرة 🔒", style=discord.ButtonStyle.red, custom_id="close_ticket")
     async def close_ticket(self, interaction: discord.Interaction, button: Button):
         await interaction.response.send_message("جاري إغلاق التذكرة...", ephemeral=True)
-        
         log_channel = interaction.guild.get_channel(LOG_CHANNEL_ID)
         if log_channel:
             await log_channel.send(f"🗑️ **تذكرة مغلقة:** تم إغلاق روم `{interaction.channel.name}` بواسطة {interaction.user.mention}")
-        
         try:
             await interaction.user.send("كيف كانت تجربتك مع الدعم الفني؟ يرجى التقييم:", view=RatingView())
         except:
             pass
-        
         await interaction.channel.delete()
 
 class TicketSelectView(View):
@@ -369,6 +384,6 @@ async def setup_tickets(interaction: discord.Interaction):
 
 @bot.event
 async def on_ready():
-    print(f'Logged in as {bot.user.name} - Reaction Roles & All Systems Ready!')
+    print(f'Logged in as {bot.user.name} - AI & All Systems Ready!')
 
 bot.run(os.getenv('TOKEN'))
