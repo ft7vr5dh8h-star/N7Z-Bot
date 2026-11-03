@@ -5,8 +5,23 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 from discord.ui import Button, View, Select
-import urllib.request
-import json
+import google.generativeai as genai
+
+# إعداد مفتاح Gemini الرسمي
+GENAI_API_KEY = os.getenv("GEMINI_API_KEY")
+if GENAI_API_KEY:
+    genai.configure(api_key=GENAI_API_KEY)
+    # استخدام إعدادات النظام لجعل البوت يتحدث العربية دائماً
+    generation_config = {
+        "temperature": 0.7,
+    }
+    ai_model = genai.GenerativeModel(
+        model_name="gemini-1.5-flash",
+        generation_config=generation_config,
+        system_instruction="أنت مساعد ذكي ومحترف لأسئلة ديسكورد، تتحدث باللغة العربية الفصحى حصراً وبطريقة ودية وذكية، وتجيب على جميع أسئلة المستخدمين بدقة."
+    )
+else:
+    ai_model = None
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -42,117 +57,37 @@ TARGET_ROLE_IDS = [
 
 REACTION_ROLES = {}
 
-# ==================== 🤖 دالة الذكاء الاصطناعي (AI Response) ====================
-def ask_ai(prompt: str) -> str:
+# ==================== 🤖 دالة ذكاء Gemini الاصطناعي المحدثة ====================
+async def get_gemini_response(prompt: str) -> str:
+    if not ai_model:
+        return "⚠️ مفتاح GEMINI_API_KEY غير مضاف في إعدادات المنصة (Secrets)."
     try:
-        url = f"https://text.pollinations.ai/{urllib.parse.quote(prompt)}"
-        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-        with urllib.request.urlopen(req, timeout=10) as response:
-            result = response.read().decode('utf-8')
-            return result if result else "عذراً، لم أستطع معالجة طلبك حالياً."
+        loop = asyncio.get_event_loop()
+        # استخدام الطريقة غير المتزامنة للذكاء الاصطناعي لتجنب الأخطاء
+        response = await ai_model.generate_content_async(prompt)
+        return response.text if response.text else "عذراً، لم أستطع صياغة إجابة."
     except Exception as e:
-        return "حدث خطأ أثناء التواصل مع سيرفر الذكاء الاصطناعي."
+        print(f"Gemini AI Error: {e}")
+        return "حدث خطأ مؤقت في الاتصال بخوادم الذكاء الاصطناعي، يرجى المحاولة لاحقاً."
 
-@bot.tree.command(name="ai", description="التحدث مع الذكاء الاصطناعي والسؤال عن أي شيء")
-@app_commands.describe(prompt="اكتب سؤالك أو طلبك هنا")
+@bot.tree.command(name="ai", description="التحدث مع ذكاء Gemini الاصطناعي")
+@app_commands.describe(prompt="اكتب سؤالك هنا")
 async def ai_command(interaction: discord.Interaction, prompt: str):
     await interaction.response.defer(thinking=True)
-    loop = asyncio.get_event_loop()
-    reply = await loop.run_in_executor(None, ask_ai, prompt)
+    reply = await get_gemini_response(prompt)
     
     if len(reply) > 2000:
         reply = reply[:1990] + "..."
         
     embed = discord.Embed(
-        title="🤖 إجابة الذكاء الاصطناعي",
+        title="✨ إجابة Gemini AI",
         description=reply,
-        color=discord.Color.purple()
+        color=discord.Color.blue()
     )
     embed.set_footer(text=f"السؤال: {prompt[:50]}")
     await interaction.followup.send(embed=embed)
 
-# ==================== 🎭 أمر رولات الرياكشن ====================
-@bot.tree.command(name="setup_reaction_roles", description="إرسال رسالة رولات الرياكشن التلقائية")
-@app_commands.checks.has_permissions(administrator=True)
-@app_commands.describe(role="الرتبة التي ستعطى للعضو", emoji="الإيموجي المطلوب (مثال: 🔥)")
-async def setup_reaction_roles(interaction: discord.Interaction, role: discord.Role, emoji: str):
-    embed = discord.Embed(
-        title="✨ نظام رولات السيرفر ✨",
-        description=f"للحصول على رول {role.mention} ، اضغط على التفاعل ({emoji}) أدناه وسيتم منحك إياها تلقائياً! 👆",
-        color=discord.Color.gold()
-    )
-    message = await interaction.channel.send(embed=embed)
-    try:
-        await message.add_reaction(emoji)
-        REACTION_ROLES[emoji] = role.id
-        await interaction.response.send_message("✅ تم إنشاء رسالة رولات الرياكشن بنجاح!", ephemeral=True)
-    except Exception as e:
-        await interaction.response.send_message(f"❌ حدث خطأ: {e}", ephemeral=True)
-
-@bot.event
-async def on_raw_reaction_add(payload):
-    if payload.member.bot:
-        return
-    emoji = str(payload.emoji)
-    if emoji in REACTION_ROLES:
-        guild = bot.get_guild(payload.guild_id)
-        if guild:
-            role = guild.get_role(REACTION_ROLES[emoji])
-            if role:
-                try:
-                    await payload.member.add_roles(role)
-                except Exception as e:
-                    print(f"Failed to add role via reaction: {e}")
-
-@bot.event
-async def on_raw_reaction_remove(payload):
-    emoji = str(payload.emoji)
-    if emoji in REACTION_ROLES:
-        guild = bot.get_guild(payload.guild_id)
-        if guild:
-            member = guild.get_member(payload.user_id)
-            if member and not member.bot:
-                role = guild.get_role(REACTION_ROLES[emoji])
-                if role:
-                    try:
-                        await member.remove_roles(role)
-                    except Exception as e:
-                        print(f"Failed to remove role via reaction: {e}")
-
-# ==================== 🛡️ أمر تأمين الرتب ====================
-@bot.tree.command(name="setup_roles", description="تأمين وضبط صلاحيات الرتب المحددة وإزالة الصلاحيات القوية")
-@app_commands.checks.has_permissions(administrator=True)
-async def setup_roles(interaction: discord.Interaction):
-    await interaction.response.send_message("⏳ جاري فحص الرتب المحددة وتأمين صلاحياتها...", ephemeral=True)
-    guild = interaction.guild
-    success_count = 0
-    
-    try:
-        default_role = guild.default_role
-        await default_role.edit(permissions=discord.Permissions(
-            send_messages=True, read_messages=True, connect=True, speak=True,
-            add_reactions=True, read_message_history=True, kick_members=False,
-            ban_members=False, manage_roles=False, manage_channels=False, administrator=False
-        ))
-    except Exception as e:
-        print(f"Error updating @everyone: {e}")
-
-    for role_id in TARGET_ROLE_IDS:
-        role = guild.get_role(role_id)
-        if role:
-            try:
-                await role.edit(permissions=discord.Permissions(
-                    send_messages=True, read_messages=True, connect=True, speak=True,
-                    add_reactions=True, read_message_history=True, kick_members=False,
-                    ban_members=False, manage_roles=False, manage_channels=False, administrator=False
-                ))
-                success_count += 1
-            except Exception as e:
-                print(f"Failed to update role {role_id}: {e}")
-
-    await interaction.followup.send(f"✅ تم الانتهاء من تأمين الرتب بنجاح!\n🔒 تم ضبط: `{success_count}` رتبة.", ephemeral=True)
-
-# ==================== 💬 الردود والأوامر السريعة والمنشن ====================
+# ==================== 💬 الرد عند المنشن وأوامر الشات ====================
 @bot.event
 async def on_message(message):
     if message.author.bot:
@@ -160,13 +95,12 @@ async def on_message(message):
 
     content = message.content.strip()
 
-    # الرد بالذكاء الاصطناعي عند منشن البوت
+    # الرد الذكي عند منشن البوت باللغة العربية وبدون أخطاء
     if bot.user.mentioned_in(message) and not message.mention_everyone:
         clean_content = content.replace(f'<@{bot.user.id}>', '').replace(f'<@!{bot.user.id}>', '').strip()
         if clean_content:
             async with message.channel.typing():
-                loop = asyncio.get_event_loop()
-                ai_reply = await loop.run_in_executor(None, ask_ai, clean_content)
+                ai_reply = await get_gemini_response(clean_content)
                 if len(ai_reply) > 2000:
                     ai_reply = ai_reply[:1990] + "..."
                 await message.reply(ai_reply)
@@ -212,7 +146,87 @@ async def on_message(message):
 
     await bot.process_commands(message)
 
-# ==================== 🛡️ نظام الحماية (Anti-Nuke) ====================
+# ==================== 🎭 رولات الرياكشن ====================
+@bot.tree.command(name="setup_reaction_roles", description="إرسال رسالة رولات الرياكشن التلقائية")
+@app_commands.checks.has_permissions(administrator=True)
+@app_commands.describe(role="الرتبة التي ستعطى للعضو", emoji="الإيموجي المطلوب")
+async def setup_reaction_roles(interaction: discord.Interaction, role: discord.Role, emoji: str):
+    embed = discord.Embed(
+        title="✨ نظام رولات السيرفر ✨",
+        description=f"للحصول على رول {role.mention} ، اضغط على التفاعل ({emoji}) أدناه!",
+        color=discord.Color.gold()
+    )
+    message = await interaction.channel.send(embed=embed)
+    try:
+        await message.add_reaction(emoji)
+        REACTION_ROLES[emoji] = role.id
+        await interaction.response.send_message("✅ تم إنشاء رسالة رولات الرياكشن بنجاح!", ephemeral=True)
+    except Exception as e:
+        await interaction.response.send_message(f"❌ حدث خطأ: {e}", ephemeral=True)
+
+@bot.event
+async def on_raw_reaction_add(payload):
+    if payload.member.bot:
+        return
+    emoji = str(payload.emoji)
+    if emoji in REACTION_ROLES:
+        guild = bot.get_guild(payload.guild_id)
+        if guild:
+            role = guild.get_role(REACTION_ROLES[emoji])
+            if role:
+                try:
+                    await payload.member.add_roles(role)
+                except Exception as e:
+                    print(f"Reaction add error: {e}")
+
+@bot.event
+async def on_raw_reaction_remove(payload):
+    emoji = str(payload.emoji)
+    if emoji in REACTION_ROLES:
+        guild = bot.get_guild(payload.guild_id)
+        if guild:
+            member = guild.get_member(payload.user_id)
+            if member and not member.bot:
+                role = guild.get_role(REACTION_ROLES[emoji])
+                if role:
+                    try:
+                        await member.remove_roles(role)
+                    except Exception as e:
+                        print(f"Reaction remove error: {e}")
+
+# ==================== 🛡️ تأمين الرتب ====================
+@bot.tree.command(name="setup_roles", description="تأمين وضبط صلاحيات الرتب المحددة")
+@app_commands.checks.has_permissions(administrator=True)
+async def setup_roles(interaction: discord.Interaction):
+    await interaction.response.send_message("⏳ جاري تأمين الرتب...", ephemeral=True)
+    guild = interaction.guild
+    success_count = 0
+    try:
+        default_role = guild.default_role
+        await default_role.edit(permissions=discord.Permissions(
+            send_messages=True, read_messages=True, connect=True, speak=True,
+            add_reactions=True, read_message_history=True, kick_members=False,
+            ban_members=False, manage_roles=False, manage_channels=False, administrator=False
+        ))
+    except Exception as e:
+        print(f"Error updating @everyone: {e}")
+
+    for role_id in TARGET_ROLE_IDS:
+        role = guild.get_role(role_id)
+        if role:
+            try:
+                await role.edit(permissions=discord.Permissions(
+                    send_messages=True, read_messages=True, connect=True, speak=True,
+                    add_reactions=True, read_message_history=True, kick_members=False,
+                    ban_members=False, manage_roles=False, manage_channels=False, administrator=False
+                ))
+                success_count += 1
+            except Exception as e:
+                print(f"Failed to update role {role_id}: {e}")
+
+    await interaction.followup.send(f"✅ تم تأمين: `{success_count}` رتبة بنجاح!", ephemeral=True)
+
+# ==================== 🛡️ Anti-Nuke ====================
 deleted_channels_tracker = defaultdict(list)
 created_channels_tracker = defaultdict(list)
 
@@ -220,29 +234,25 @@ created_channels_tracker = defaultdict(list)
 async def on_guild_channel_delete(channel):
     if channel.category and channel.category.id == CATEGORY_ID:
         return
-
     try:
         async for entry in channel.guild.audit_logs(limit=1, action=discord.AuditLogAction.channel_delete):
             user = entry.user
             if user.bot or user.guild_permissions.administrator:
                 return
-
             now = asyncio.get_event_loop().time()
             deleted_channels_tracker[user.id] = [t for t in deleted_channels_tracker[user.id] if now - t < 60]
             deleted_channels_tracker[user.id].append(now)
-
             if len(deleted_channels_tracker[user.id]) >= 2:
                 log_channel = channel.guild.get_channel(LOG_CHANNEL_ID)
                 try:
-                    await user.timeout(discord.utils.utcnow() + discord.timedelta(hours=1), reason="حماية السيرفر: محاولة حذف رومات جماعية!")
+                    await user.timeout(discord.utils.utcnow() + discord.timedelta(hours=1), reason="حماية السيرفر: حذف رومات!")
                 except:
                     pass
-
                 if log_channel:
-                    await log_channel.send(f"🚨 **تنبيه حماية (Anti-Nuke):** قام العضو {user.mention} بحذف أكثر من رومين في وقت قصير! تم عمل TimeOut له.")
+                    await log_channel.send(f"🚨 **Anti-Nuke:** {user.mention} تم إيقافه بسبب حذف رومات.")
                 break
     except Exception as e:
-        print(f"Anti-nuke delete error: {e}")
+        print(f"Anti-nuke error: {e}")
 
 @bot.event
 async def on_guild_channel_create(channel):
@@ -251,38 +261,33 @@ async def on_guild_channel_create(channel):
             user = entry.user
             if user.bot or user.guild_permissions.administrator:
                 return
-
             now = asyncio.get_event_loop().time()
             created_channels_tracker[user.id] = [t for t in created_channels_tracker[user.id] if now - t < 60]
             created_channels_tracker[user.id].append(now)
-
             if len(created_channels_tracker[user.id]) >= 5:
                 log_channel = channel.guild.get_channel(LOG_CHANNEL_ID)
                 try:
-                    await user.timeout(discord.utils.utcnow() + discord.timedelta(hours=1), reason="حماية السيرفر: إنشاء رومات بشكل مريب!")
+                    await user.timeout(discord.utils.utcnow() + discord.timedelta(hours=1), reason="حماية السيرفر: إنشاء رومات بكثرة!")
                 except:
                     pass
-
                 if log_channel:
-                    await log_channel.send(f"🚨 **تنبيه حماية (Anti-Nuke):** قام العضو {user.mention} بإنشاء 5 رومات أو أكثر في دقيقة! تم إيقافه.")
+                    await log_channel.send(f"🚨 **Anti-Nuke:** {user.mention} تم إيقافه بسبب إنشاء رومات كثيرة.")
                 break
     except Exception as e:
         print(f"Anti-nuke create error: {e}")
 
-# ==================== 📢 أمر البرودكاست ====================
-@bot.tree.command(name="broadcast", description="إرسال برودكاست في الخاص لجميع أعضاء السيرفر مع منشن")
+# ==================== 📢 Broadcast ====================
+@bot.tree.command(name="broadcast", description="إرسال برودكاست للأعضاء")
 @app_commands.checks.has_permissions(administrator=True)
-@app_commands.describe(message="النص المراد إرساله للأعضاء")
+@app_commands.describe(message="النص المراد إرساله")
 async def broadcast(interaction: discord.Interaction, message: str):
-    await interaction.response.send_message("⏳ جاري بدء إرسال البرودكاست...", ephemeral=True)
-    success = 0
-    failed = 0
+    await interaction.response.send_message("⏳ جاري إرسال البرودكاست...", ephemeral=True)
+    success, failed = 0, 0
     for member in interaction.guild.members:
         if member.bot:
             continue
         try:
-            full_message = f"{message}\n\n{member.mention}"
-            await member.send(full_message)
+            await member.send(f"{message}\n\n{member.mention}")
             success += 1
             await asyncio.sleep(0.5)
         except Exception:
@@ -290,9 +295,9 @@ async def broadcast(interaction: discord.Interaction, message: str):
 
     log_channel = interaction.guild.get_channel(LOG_CHANNEL_ID)
     if log_channel:
-        await log_channel.send(f"📢 **تقرير البرودكاست:** تم الإرسال بواسطة {interaction.user.mention}\n✅ نجح الإرسال إلى: `{success}` عضو\n❌ فشل: `{failed}` عضو")
+        await log_channel.send(f"📢 **تقرير البرودكاست:** نجح: `{success}` | فشل: `{failed}`")
 
-# ==================== 🎫 أزرار وقوائم التذاكر ====================
+# ==================== 🎫 التذاكر والتقييم ====================
 class RatingView(View):
     def __init__(self):
         super().__init__(timeout=None)
@@ -308,9 +313,6 @@ class RatingView(View):
     )
     async def select_callback(self, interaction: discord.Interaction, select: Select):
         await interaction.response.send_message(f"شكراً لتقييمك: {select.values[0]} نجوم! ❤️", ephemeral=True)
-        log_channel = interaction.guild.get_channel(LOG_CHANNEL_ID)
-        if log_channel:
-            await log_channel.send(f"📊 **تقييم جديد:** قام {interaction.user.mention} بتقييم التذكرة بـ {select.values[0]}/5")
 
 class TicketControlView(View):
     def __init__(self):
@@ -319,11 +321,8 @@ class TicketControlView(View):
     @discord.ui.button(label="إغلاق التذكرة 🔒", style=discord.ButtonStyle.red, custom_id="close_ticket")
     async def close_ticket(self, interaction: discord.Interaction, button: Button):
         await interaction.response.send_message("جاري إغلاق التذكرة...", ephemeral=True)
-        log_channel = interaction.guild.get_channel(LOG_CHANNEL_ID)
-        if log_channel:
-            await log_channel.send(f"🗑️ **تذكرة مغلقة:** تم إغلاق روم `{interaction.channel.name}` بواسطة {interaction.user.mention}")
         try:
-            await interaction.user.send("كيف كانت تجربتك مع الدعم الفني؟ يرجى التقييم:", view=RatingView())
+            await interaction.user.send("كيف كانت تجربتك مع الدعم الفني؟", view=RatingView())
         except:
             pass
         await interaction.channel.delete()
@@ -336,54 +335,38 @@ class TicketSelectView(View):
         placeholder="اختر قسم الدعم الفني...",
         custom_id="ticket_category_select",
         options=[
-            discord.SelectOption(label="الدعم الفني العام", description="مساعدة في المشاكل العامة", emoji="🛠️"),
-            discord.SelectOption(label="قسم الشكاوى", description="تقديم شكوى خاصة", emoji="⚠️"),
-            discord.SelectOption(label="المبيعات والاشتراكات", description="استفسارات الشراء", emoji="💳"),
+            discord.SelectOption(label="الدعم الفني العام", emoji="🛠️"),
+            discord.SelectOption(label="قسم الشكاوى", emoji="⚠️"),
+            discord.SelectOption(label="المبيعات والاشتراكات", emoji="💳"),
         ]
     )
     async def select_callback(self, interaction: discord.Interaction, select: Select):
         guild = interaction.guild
         category = guild.get_channel(CATEGORY_ID)
         support_role = guild.get_role(SUPPORT_ROLE_ID)
-
         overwrites = {
             guild.default_role: discord.PermissionOverwrite(read_messages=False),
             interaction.user: discord.PermissionOverwrite(read_messages=True, send_messages=True),
             support_role: discord.PermissionOverwrite(read_messages=True, send_messages=True)
         }
-
         ticket_channel = await guild.create_text_channel(
             name=f"t-{select.values[0]}-{interaction.user.name}",
             category=category,
             overwrites=overwrites
         )
-
-        await interaction.response.send_message(f"تم فتح تذكرتك بنجاح: {ticket_channel.mention}", ephemeral=True)
-
-        embed = discord.Embed(
-            title=f"تذكرة: {select.values[0]}",
-            description=f"أهلاً بك {interaction.user.mention}، يرجى كتابة مشكلتك وسيقوم فريق الدعم الفني بالرد عليك.",
-            color=discord.Color.green()
-        )
+        await interaction.response.send_message(f"تم فتح تذكرتك: {ticket_channel.mention}", ephemeral=True)
+        embed = discord.Embed(title=f"تذكرة: {select.values[0]}", description=f"أهلاً بك {interaction.user.mention}، اكتب مشكلتك هنا.", color=discord.Color.green())
         await ticket_channel.send(content=f"{interaction.user.mention} | {support_role.mention}", embed=embed, view=TicketControlView())
 
-        log_channel = guild.get_channel(LOG_CHANNEL_ID)
-        if log_channel:
-            await log_channel.send(f"📩 **تذكرة جديدة:** قام {interaction.user.mention} بفتح تذكرة في قسم `{select.values[0]}` ({ticket_channel.mention})")
-
-@bot.tree.command(name="setup_tickets", description="إرسال لوحة تذاكر الدعم الفني")
+@bot.tree.command(name="setup_tickets", description="إرسال لوحة التذاكر")
 @app_commands.checks.has_permissions(administrator=True)
 async def setup_tickets(interaction: discord.Interaction):
-    embed = discord.Embed(
-        title="مركز الدعم الفني 🎫",
-        description="يرجى اختيار القسم المناسب من القائمة أدناه لفتح تذكرة.",
-        color=discord.Color.blue()
-    )
+    embed = discord.Embed(title="مركز الدعم الفني 🎫", description="اختر القسم المناسب لفتح تذكرة.", color=discord.Color.blue())
     await interaction.channel.send(embed=embed, view=TicketSelectView())
     await interaction.response.send_message("تم إرسال لوحة التذاكر بنجاح! ✅", ephemeral=True)
 
 @bot.event
 async def on_ready():
-    print(f'Logged in as {bot.user.name} - AI & All Systems Ready!')
+    print(f'Logged in as {bot.user.name} - Gemini Arabic AI Ready!')
 
 bot.run(os.getenv('TOKEN'))
