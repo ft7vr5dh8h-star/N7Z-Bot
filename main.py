@@ -11,14 +11,20 @@ import google.generativeai as genai
 GENAI_API_KEY = os.getenv("GEMINI_API_KEY")
 if GENAI_API_KEY:
     genai.configure(api_key=GENAI_API_KEY)
-    # استخدام إعدادات النظام لجعل البوت يتحدث العربية دائماً
     generation_config = {
         "temperature": 0.7,
     }
+    # تعليمات النظام لنوجه البوت بدقة لمساعدة أعضاء السيرفر وتوجيههم للرومات
+    system_instruction = (
+        "أنت مشرف ذكي ومساعد احترافي لسيرفر ديسكورد. "
+        "مهمتك هي مساعدة الأعضاء والإجابة على استفساراتهم باللغة العربية الفصحى وبطريقة ودية. "
+        "إذا سألك عضو عن مكان روم معين في السيرفر (مثل روم التذاكر، روم الستريك، روم الفويس، إلخ)، "
+        "أجب باختصار ووضح له اسم الروم أو أين يجدها بدقة."
+    )
     ai_model = genai.GenerativeModel(
         model_name="gemini-1.5-flash",
         generation_config=generation_config,
-        system_instruction="أنت مساعد ذكي ومحترف لأسئلة ديسكورد، تتحدث باللغة العربية الفصحى حصراً وبطريقة ودية وذكية، وتجيب على جميع أسئلة المستخدمين بدقة."
+        system_instruction=system_instruction
     )
 else:
     ai_model = None
@@ -57,37 +63,44 @@ TARGET_ROLE_IDS = [
 
 REACTION_ROLES = {}
 
-# ==================== 🤖 دالة ذكاء Gemini الاصطناعي المحدثة ====================
-async def get_gemini_response(prompt: str) -> str:
+# ==================== 🤖 دالة ذكاء Gemini الاصطناعي وتوجيه الرومات ====================
+async def get_gemini_response(prompt: str, guild: discord.guild = None) -> str:
     if not ai_model:
         return "⚠️ مفتاح GEMINI_API_KEY غير مضاف في إعدادات المنصة (Secrets)."
     try:
+        # إذا سأل العضو عن الرومات، نعطي البوت قائمة بأسماء رومات السيرفر عشان يوجهه صح
+        channels_info = ""
+        if guild:
+            channel_list = [c.name for c in guild.text_channels[:30]]
+            channels_info = f"\n(معلومات سياقية: رومات السيرفر الحالية هي: {', '.join(channel_list)})"
+
+        full_prompt = prompt + channels_info
+        
         loop = asyncio.get_event_loop()
-        # استخدام الطريقة غير المتزامنة للذكاء الاصطناعي لتجنب الأخطاء
-        response = await ai_model.generate_content_async(prompt)
+        response = await ai_model.generate_content_async(full_prompt)
         return response.text if response.text else "عذراً، لم أستطع صياغة إجابة."
     except Exception as e:
         print(f"Gemini AI Error: {e}")
-        return "حدث خطأ مؤقت في الاتصال بخوادم الذكاء الاصطناعي، يرجى المحاولة لاحقاً."
+        return "حدث خطأ مؤقت في الاتصال، يرجى المحاولة لاحقاً."
 
 @bot.tree.command(name="ai", description="التحدث مع ذكاء Gemini الاصطناعي")
 @app_commands.describe(prompt="اكتب سؤالك هنا")
 async def ai_command(interaction: discord.Interaction, prompt: str):
     await interaction.response.defer(thinking=True)
-    reply = await get_gemini_response(prompt)
+    reply = await get_gemini_response(prompt, interaction.guild)
     
     if len(reply) > 2000:
         reply = reply[:1990] + "..."
         
     embed = discord.Embed(
-        title="✨ إجابة Gemini AI",
+        title="✨ إجابة المساعد الذكي",
         description=reply,
         color=discord.Color.blue()
     )
     embed.set_footer(text=f"السؤال: {prompt[:50]}")
     await interaction.followup.send(embed=embed)
 
-# ==================== 💬 الرد عند المنشن وأوامر الشات ====================
+# ==================== 💬 الرد عند المنشن والتوجيه التلقائي ====================
 @bot.event
 async def on_message(message):
     if message.author.bot:
@@ -95,12 +108,12 @@ async def on_message(message):
 
     content = message.content.strip()
 
-    # الرد الذكي عند منشن البوت باللغة العربية وبدون أخطاء
+    # الرد التلقائي عند منشن البوت (يوجه العضو للروم المطلوب)
     if bot.user.mentioned_in(message) and not message.mention_everyone:
         clean_content = content.replace(f'<@{bot.user.id}>', '').replace(f'<@!{bot.user.id}>', '').strip()
         if clean_content:
             async with message.channel.typing():
-                ai_reply = await get_gemini_response(clean_content)
+                ai_reply = await get_gemini_response(clean_content, message.guild)
                 if len(ai_reply) > 2000:
                     ai_reply = ai_reply[:1990] + "..."
                 await message.reply(ai_reply)
@@ -367,6 +380,6 @@ async def setup_tickets(interaction: discord.Interaction):
 
 @bot.event
 async def on_ready():
-    print(f'Logged in as {bot.user.name} - Gemini Arabic AI Ready!')
+    print(f'Logged in as {bot.user.name} - Channel Guide AI Ready!')
 
 bot.run(os.getenv('TOKEN'))
