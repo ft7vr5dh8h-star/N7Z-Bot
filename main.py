@@ -10,6 +10,7 @@ intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
 intents.guilds = True
+intents.reactions = True  # مفعل لتفاعل الرياكشنات
 
 GUILD_ID = 1563678057863057559  # آيدي سيرفرك
 
@@ -29,23 +30,76 @@ SUPPORT_ROLE_ID = 1563683677819637782
 LOG_CHANNEL_ID = 1565578863277248655
 CATEGORY_ID = 1563682943333965884
 
-# قائمة آيديات الرتب التي تود تأمينها وضبط صلاحياتها
+# قائمة آيديات الرتب التي تود تأمينها
 TARGET_ROLE_IDS = [
-    1563693370436751441,
-    1563683211266228374,
-    1563749745116053605,
-    1563693266120216619,
-    1563690204932481165,
-    1563690329234866196,
-    1563693109903097886,
-    1563692936368234599,
-    1563690405101310142,
-    1563690490346348604,
-    1563692859377590342,
-    1563693032715591770,
-    1563682396958621848,
-    1566075985022029826
+    1563693370436751441, 1563683211266228374, 1563749745116053605,
+    1563693266120216619, 1563690204932481165, 1563690329234866196,
+    1563693109903097886, 1563692936368234599, 1563690405101310142,
+    1563690490346348604, 1563692859377590342, 1563693032715591770,
+    1563682396958621848, 1566075985022029826
 ]
+
+# ربط رسائل الرياكشن بالرتب (سيتم حفظها هنا، وتستطيع تعديل آيدي الرول والإيموجي)
+# ضع هنا آيدي الرول الذي تريد إعطاءه عند الضغط على إيموجي النار 🔥 مثلاً
+REACTION_ROLES = {
+    # مثال: "🔥": 1563693370436751441 (استبدله بآيدي الرول المطلوب)
+}
+
+# ==================== 🎭 أمر إرسال رسالة الرولات التلقائية (Reaction Roles) ====================
+@bot.tree.command(name="setup_reaction_roles", description="إرسال رسالة رولات الرياكشن التلقائية")
+@app_commands.checks.has_permissions(administrator=True)
+@app_commands.describe(role="الرتبة التي ستعطى للعضو", emoji="الإيموجي المطلوب (مثال: 🔥)")
+async def setup_reaction_roles(interaction: discord.Interaction, role: discord.Role, emoji: str):
+    embed = discord.Embed(
+        title="✨ نظام رولات السيرفر ✨",
+        description=f"للحصول على رول {role.mention} ، اضغط على التفاعل ({emoji}) أدناه وسيتم منحك إياها تلقائياً! 👆",
+        color=discord.Color.gold()
+    )
+    
+    # إرسال الرسالة في الروم الحالي
+    message = await interaction.channel.send(embed=embed)
+    
+    # إضافة التفاعل للرسالة تلقائياً
+    try:
+        await message.add_reaction(emoji)
+        # حفظ الربط (الإيموجي مع آيدي الرول والرسالة)
+        REACTION_ROLES[emoji] = role.id
+        await interaction.response.send_message("✅ تم إنشاء رسالة رولات الرياكشن بنجاح!", ephemeral=True)
+    except Exception as e:
+        await interaction.response.send_message(f"❌ حدث خطأ (تأكد أن البوت يمتلك صلاحية إضافة تفاعلات): {e}", ephemeral=True)
+
+# ==================== 📥 نظام منح الرول عند إضافة الرياكشن ====================
+@bot.event
+async def on_raw_reaction_add(payload):
+    if payload.member.bot:
+        return
+    
+    emoji = str(payload.emoji)
+    if emoji in REACTION_ROLES:
+        guild = bot.get_guild(payload.guild_id)
+        if guild:
+            role = guild.get_role(REACTION_ROLES[emoji])
+            if role:
+                try:
+                    await payload.member.add_roles(role)
+                except Exception as e:
+                    print(f"Failed to add role via reaction: {e}")
+
+# ==================== 📤 نظام إزالة الرول عند إزالة الرياكشن ====================
+@bot.event
+async def on_raw_reaction_remove(payload):
+    emoji = str(payload.emoji)
+    if emoji in REACTION_ROLES:
+        guild = bot.get_guild(payload.guild_id)
+        if guild:
+            member = guild.get_member(payload.user_id)
+            if member and not member.bot:
+                role = guild.get_role(REACTION_ROLES[emoji])
+                if role:
+                    try:
+                        await member.remove_roles(role)
+                    except Exception as e:
+                        print(f"Failed to remove role via reaction: {e}")
 
 # ==================== 🛡️ أمر ضبط وتأمين صلاحيات الرتب المحددة ====================
 @bot.tree.command(name="setup_roles", description="تأمين وضبط صلاحيات الرتب المحددة وإزالة الصلاحيات القوية")
@@ -57,42 +111,24 @@ async def setup_roles(interaction: discord.Interaction):
     success_count = 0
     not_found_count = 0
 
-    # 1. تأمين رتبة Everyone كخطوة أساسية أولى
     try:
         default_role = guild.default_role
         await default_role.edit(permissions=discord.Permissions(
-            send_messages=True,
-            read_messages=True,
-            connect=True,
-            speak=True,
-            add_reactions=True,
-            read_message_history=True,
-            kick_members=False,
-            ban_members=False,
-            manage_roles=False,
-            manage_channels=False,
-            administrator=False
+            send_messages=True, read_messages=True, connect=True, speak=True,
+            add_reactions=True, read_message_history=True, kick_members=False,
+            ban_members=False, manage_roles=False, manage_channels=False, administrator=False
         ))
     except Exception as e:
         print(f"Error updating @everyone: {e}")
 
-    # 2. المرور على كافة الآيديات المحددة وتعديل صلاحياتها
     for role_id in TARGET_ROLE_IDS:
         role = guild.get_role(role_id)
         if role:
             try:
                 await role.edit(permissions=discord.Permissions(
-                    send_messages=True,
-                    read_messages=True,
-                    connect=True,
-                    speak=True,
-                    add_reactions=True,
-                    read_message_history=True,
-                    kick_members=False,      # منع الكيك
-                    ban_members=False,       # منع الباند
-                    manage_roles=False,      # منع تعديل الرتب
-                    manage_channels=False,   # منع تعديل الرومات
-                    administrator=False      # منع الصلاحية الكاملة
+                    send_messages=True, read_messages=True, connect=True, speak=True,
+                    add_reactions=True, read_message_history=True, kick_members=False,
+                    ban_members=False, manage_roles=False, manage_channels=False, administrator=False
                 ))
                 success_count += 1
             except Exception as e:
@@ -102,8 +138,7 @@ async def setup_roles(interaction: discord.Interaction):
 
     await interaction.followup.send(
         f"✅ تم الانتهاء من تأمين الرتب بنجاح!\n"
-        f"🔒 تم ضبط وصيانة: `{success_count}` رتبة.\n"
-        (f"⚠️ لم يتم العثور على `{not_found_count}` رتبة في السيرفر (تأكد من صحة الآيديات)." if not_found_count > 0 else ""),
+        f"🔒 تم ضبط وصيانة: `{success_count}` رتبة.",
         ephemeral=True
     )
 
@@ -334,6 +369,6 @@ async def setup_tickets(interaction: discord.Interaction):
 
 @bot.event
 async def on_ready():
-    print(f'Logged in as {bot.user.name} - Specific Roles Security Setup Ready!')
+    print(f'Logged in as {bot.user.name} - Reaction Roles & All Systems Ready!')
 
 bot.run(os.getenv('TOKEN'))
