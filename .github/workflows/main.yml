@@ -1,4 +1,4 @@
-name: Run bot 
+name: Run bot
 
 on:
   push:
