@@ -30,4 +30,4 @@ jobs:
         TOKEN: ${{ secrets.TOKEN }}
         GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
       run: |
-        python main.py
+        python main.pyg
