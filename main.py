@@ -8,7 +8,9 @@ from discord.ui import Button, View, Select
 import google.generativeai as genai
 
 # إعداد مفتاح Gemini الرسمي
-GENAI_API_KEY = os.getenv("GEMINI_API_KEY")
+GENAI_API_KEY = "حط_مفتاحك_هنا_مباشرة"
+if GENAI_API_KEY:
+    genai.configure(api_key=GENAI_API_KEY)
 if GENAI_API_KEY:
     genai.configure(api_key=GENAI_API_KEY)
     generation_config = {
