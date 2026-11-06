@@ -1,35 +1,27 @@
 import os
 import asyncio
 from collections import defaultdict
+from datetime import timedelta
 import discord
 from discord import app_commands
 from discord.ext import commands
 from discord.ui import Button, View, Select
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 
-# إعداد مفتاح Gemini الرسمي
-GENAI_API_KEY = "حط_مفتاحك_هنا_مباشرة"
-if GENAI_API_KEY:
-    genai.configure(api_key=GENAI_API_KEY)
-if GENAI_API_KEY:
-    genai.configure(api_key=GENAI_API_KEY)
-    generation_config = {
-        "temperature": 0.7,
-    }
-    # تعليمات النظام لنوجه البوت بدقة لمساعدة أعضاء السيرفر وتوجيههم للرومات
-    system_instruction = (
-        "أنت مشرف ذكي ومساعد احترافي لسيرفر ديسكورد. "
-        "مهمتك هي مساعدة الأعضاء والإجابة على استفساراتهم باللغة العربية الفصحى وبطريقة ودية. "
-        "إذا سألك عضو عن مكان روم معين في السيرفر (مثل روم التذاكر، روم الستريك، روم الفويس، إلخ)، "
-        "أجب باختصار ووضح له اسم الروم أو أين يجدها بدقة."
-    )
-    ai_model = genai.GenerativeModel(
-        model_name="gemini-1.5-flash",
-        generation_config=generation_config,
-        system_instruction=system_instruction
-    )
-else:
-    ai_model = None
+DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+
+SYSTEM_INSTRUCTION = (
+    "أنت مساعد ذكي واحترافي داخل سيرفر ديسكورد. "
+    "أجب عن الأسئلة العامة بوضوح وبشكل ودود وبنفس لغة السائل (العربية افتراضياً). "
+    "وأنت خبير في بايثون: اشرح الأكواد، اكتبها، وصحح الأخطاء فيها، "
+    "واعرض الكود دائماً داخل كتل ```python. اجعل الإجابات مختصرة ومفيدة. "
+    "إذا سألك عضو عن مكان روم معين في السيرفر، وضح له اسم الروم من القائمة المعطاة لك."
+)
+
+ai_client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -65,42 +57,62 @@ TARGET_ROLE_IDS = [
 
 REACTION_ROLES = {}
 
-# ==================== 🤖 دالة ذكاء Gemini الاصطناعي وتوجيه الرومات ====================
-async def get_gemini_response(prompt: str, guild: discord.guild = None) -> str:
-    if not ai_model:
-        return "⚠️ مفتاح GEMINI_API_KEY غير مضاف في إعدادات المنصة (Secrets)."
-    try:
-        # إذا سأل العضو عن الرومات، نعطي البوت قائمة بأسماء رومات السيرفر عشان يوجهه صح
-        channels_info = ""
-        if guild:
-            channel_list = [c.name for c in guild.text_channels[:30]]
-            channels_info = f"\n(معلومات سياقية: رومات السيرفر الحالية هي: {', '.join(channel_list)})"
+# ==================== 🤖 Gemini AI ====================
+def split_message(text: str, limit: int = 1900):
+    chunks = []
+    while len(text) > limit:
+        cut = text.rfind("\n", 0, limit)
+        if cut < limit // 2:
+            cut = limit
+        chunks.append(text[:cut])
+        text = text[cut:].lstrip("\n")
+    if text:
+        chunks.append(text)
+    return chunks
 
-        full_prompt = prompt + channels_info
-        
-        loop = asyncio.get_event_loop()
-        response = await ai_model.generate_content_async(full_prompt)
-        return response.text if response.text else "عذراً، لم أستطع صياغة إجابة."
+async def get_gemini_response(prompt: str, guild: discord.Guild = None) -> str:
+    if not ai_client:
+        return "⚠️ مفتاح GEMINI_API_KEY غير مضاف في متغيرات البيئة."
+    try:
+        if guild:
+            names = [c.name for c in guild.text_channels[:30]]
+            prompt += f"\n\n(رومات السيرفر: {', '.join(names)})"
+        response = await ai_client.aio.models.generate_content(
+            model=GEMINI_MODEL,
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                system_instruction=SYSTEM_INSTRUCTION,
+                temperature=0.7,
+            ),
+        )
+        return response.text or "عذراً، لم أستطع صياغة إجابة."
     except Exception as e:
         print(f"Gemini AI Error: {e}")
         return "حدث خطأ مؤقت في الاتصال، يرجى المحاولة لاحقاً."
+
+async def reply_with_ai(message: discord.Message, prompt: str):
+    async with message.channel.typing():
+        reply = await get_gemini_response(prompt, message.guild)
+    chunks = split_message(reply)
+    await message.reply(chunks[0], mention_author=False)
+    for chunk in chunks[1:]:
+        await message.channel.send(chunk)
+
+@bot.command(name="ai")
+async def ai_prefix_command(ctx: commands.Context, *, prompt: str = ""):
+    if not prompt.strip():
+        await ctx.reply("اكتب سؤالك بعد الأمر، مثال: `!ai اشرح لي الـ decorators في بايثون`", mention_author=False)
+        return
+    await reply_with_ai(ctx.message, prompt)
 
 @bot.tree.command(name="ai", description="التحدث مع ذكاء Gemini الاصطناعي")
 @app_commands.describe(prompt="اكتب سؤالك هنا")
 async def ai_command(interaction: discord.Interaction, prompt: str):
     await interaction.response.defer(thinking=True)
-    reply = await get_gemini_response(prompt, interaction.guild)
-    
-    if len(reply) > 2000:
-        reply = reply[:1990] + "..."
-        
-    embed = discord.Embed(
-        title="✨ إجابة المساعد الذكي",
-        description=reply,
-        color=discord.Color.blue()
-    )
-    embed.set_footer(text=f"السؤال: {prompt[:50]}")
-    await interaction.followup.send(embed=embed)
+    chunks = split_message(await get_gemini_response(prompt, interaction.guild))
+    await interaction.followup.send(chunks[0])
+    for chunk in chunks[1:]:
+        await interaction.followup.send(chunk)
 
 # ==================== 💬 الرد عند المنشن والتوجيه التلقائي ====================
 @bot.event
@@ -114,11 +126,7 @@ async def on_message(message):
     if bot.user.mentioned_in(message) and not message.mention_everyone:
         clean_content = content.replace(f'<@{bot.user.id}>', '').replace(f'<@!{bot.user.id}>', '').strip()
         if clean_content:
-            async with message.channel.typing():
-                ai_reply = await get_gemini_response(clean_content, message.guild)
-                if len(ai_reply) > 2000:
-                    ai_reply = ai_reply[:1990] + "..."
-                await message.reply(ai_reply)
+            await reply_with_ai(message, clean_content)
             return
 
     if content == ".":
@@ -151,7 +159,7 @@ async def on_message(message):
         if message.mentions:
             target = message.mentions[0]
             try:
-                await target.timeout(discord.utils.utcnow() + discord.timedelta(minutes=1), reason=f"اسكت بواسطة {message.author}")
+                await target.timeout(discord.utils.utcnow() + timedelta(minutes=1), reason=f"اسكت بواسطة {message.author}")
                 await message.channel.send(f"🤫 تم إلقام {target.mention} تايم آوت لمدة دقيقة!")
             except:
                 await message.channel.send("❌ ما قدرت أعطيه تايم آوت، ارفع رتبة البوت فوق رتبته.")
@@ -260,7 +268,7 @@ async def on_guild_channel_delete(channel):
             if len(deleted_channels_tracker[user.id]) >= 2:
                 log_channel = channel.guild.get_channel(LOG_CHANNEL_ID)
                 try:
-                    await user.timeout(discord.utils.utcnow() + discord.timedelta(hours=1), reason="حماية السيرفر: حذف رومات!")
+                    await user.timeout(discord.utils.utcnow() + timedelta(hours=1), reason="حماية السيرفر: حذف رومات!")
                 except:
                     pass
                 if log_channel:
@@ -282,7 +290,7 @@ async def on_guild_channel_create(channel):
             if len(created_channels_tracker[user.id]) >= 5:
                 log_channel = channel.guild.get_channel(LOG_CHANNEL_ID)
                 try:
-                    await user.timeout(discord.utils.utcnow() + discord.timedelta(hours=1), reason="حماية السيرفر: إنشاء رومات بكثرة!")
+                    await user.timeout(discord.utils.utcnow() + timedelta(hours=1), reason="حماية السيرفر: إنشاء رومات بكثرة!")
                 except:
                     pass
                 if log_channel:
@@ -384,4 +392,4 @@ async def setup_tickets(interaction: discord.Interaction):
 async def on_ready():
     print(f'Logged in as {bot.user.name} - Channel Guide AI Ready!')
 
-bot.run(os.getenv('TOKEN'))
+bot.run(DISCORD_TOKEN)
