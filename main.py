@@ -22,6 +22,8 @@ system_instruction = (
 )
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
 GEMINI_FALLBACK_MODELS = [m.strip() for m in os.getenv("GEMINI_FALLBACK_MODELS", "gemini-2.5-flash-lite,gemini-2.0-flash").split(",") if m.strip()]
+AI_TOTAL_TIMEOUT = 28
+AI_ATTEMPT_TIMEOUT = 10
 ai_client = genai.Client(api_key=GENAI_API_KEY) if GENAI_API_KEY else None
 ai_config = types.GenerateContentConfig(temperature=0.7, system_instruction=system_instruction)
 
@@ -72,28 +74,33 @@ async def get_gemini_response(prompt: str, guild: discord.guild = None) -> str:
 
         full_prompt = prompt + channels_info
         
-        # 503 (high demand) is transient: retry, then fall back to other models
+        # Hard cap of 30s total: each attempt is time-limited, a failure or slow
+        # model moves straight on to the next one, cycling until the budget runs out.
         models = [GEMINI_MODEL] + [m for m in GEMINI_FALLBACK_MODELS if m != GEMINI_MODEL]
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + AI_TOTAL_TIMEOUT
         response = None
         last_error = None
-        for model in models:
-            for attempt in range(3):
-                try:
-                    response = await ai_client.aio.models.generate_content(
-                        model=model, contents=full_prompt, config=ai_config
-                    )
-                    break
-                except Exception as e:
-                    last_error = e
-                    print(f"Gemini AI Error ({model}, attempt {attempt + 1}): {e}")
-                    if "503" in str(e) or "UNAVAILABLE" in str(e) or "429" in str(e):
-                        await asyncio.sleep(2 * (attempt + 1))
-                        continue
-                    break  # 404/other: try next model
-            if response is not None:
+        attempt = 0
+        while response is None:
+            remaining = deadline - loop.time()
+            if remaining < 2:
                 break
+            model = models[attempt % len(models)]
+            attempt += 1
+            try:
+                response = await asyncio.wait_for(
+                    ai_client.aio.models.generate_content(
+                        model=model, contents=full_prompt, config=ai_config
+                    ),
+                    timeout=min(AI_ATTEMPT_TIMEOUT, remaining),
+                )
+            except Exception as e:
+                last_error = e or asyncio.TimeoutError()
+                print(f"Gemini AI Error ({model}, attempt {attempt}): {repr(e)[:300]}")
+                await asyncio.sleep(0.5)
         if response is None:
-            raise last_error
+            raise last_error or asyncio.TimeoutError()
         return response.text if response.text else "عذراً، لم أستطع صياغة إجابة."
     except Exception as e:
         print(f"Gemini AI Error: {e}")
