@@ -8,9 +8,7 @@ from discord.ui import Button, View, Select
 import google.generativeai as genai
 
 # إعداد مفتاح Gemini الرسمي
-GENAI_API_KEY = "حط_مفتاحك_هنا_مباشرة"
-if GENAI_API_KEY:
-    genai.configure(api_key=GENAI_API_KEY)
+GENAI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip().strip('"\'')
 if GENAI_API_KEY:
     genai.configure(api_key=GENAI_API_KEY)
     generation_config = {
@@ -384,4 +382,7 @@ async def setup_tickets(interaction: discord.Interaction):
 async def on_ready():
     print(f'Logged in as {bot.user.name} - Channel Guide AI Ready!')
 
-bot.run(os.getenv('DISCORD_TOKEN') or os.getenv('TOKEN'))
+_token = (os.getenv('DISCORD_TOKEN') or os.getenv('TOKEN') or '').strip().strip('"\'')
+if not _token:
+    raise SystemExit('DISCORD_TOKEN is not set')
+bot.run(_token)
