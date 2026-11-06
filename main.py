@@ -21,6 +21,7 @@ system_instruction = (
     "(مثل هجمات التعطيل أو الاختراق)، وقدّم نصائح الأمان والحماية بدلاً منها."
 )
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
+GEMINI_FALLBACK_MODELS = [m.strip() for m in os.getenv("GEMINI_FALLBACK_MODELS", "gemini-2.5-flash-lite,gemini-2.0-flash").split(",") if m.strip()]
 ai_client = genai.Client(api_key=GENAI_API_KEY) if GENAI_API_KEY else None
 ai_config = types.GenerateContentConfig(temperature=0.7, system_instruction=system_instruction)
 
@@ -71,9 +72,28 @@ async def get_gemini_response(prompt: str, guild: discord.guild = None) -> str:
 
         full_prompt = prompt + channels_info
         
-        response = await ai_client.aio.models.generate_content(
-            model=GEMINI_MODEL, contents=full_prompt, config=ai_config
-        )
+        # 503 (high demand) is transient: retry, then fall back to other models
+        models = [GEMINI_MODEL] + [m for m in GEMINI_FALLBACK_MODELS if m != GEMINI_MODEL]
+        response = None
+        last_error = None
+        for model in models:
+            for attempt in range(3):
+                try:
+                    response = await ai_client.aio.models.generate_content(
+                        model=model, contents=full_prompt, config=ai_config
+                    )
+                    break
+                except Exception as e:
+                    last_error = e
+                    print(f"Gemini AI Error ({model}, attempt {attempt + 1}): {e}")
+                    if "503" in str(e) or "UNAVAILABLE" in str(e) or "429" in str(e):
+                        await asyncio.sleep(2 * (attempt + 1))
+                        continue
+                    break  # 404/other: try next model
+            if response is not None:
+                break
+        if response is None:
+            raise last_error
         return response.text if response.text else "عذراً، لم أستطع صياغة إجابة."
     except Exception as e:
         print(f"Gemini AI Error: {e}")
