@@ -1,33 +1,22 @@
-name: Run Discord Bot
+import os
+import discord
 
-on:
-  push:
-    branches: [ main ]
-  workflow_dispatch:
-  schedule:
-    - cron: '*/30 * * * *'
+# جلب التوكن من متغيرات البيئة في رايلواي
+TOKEN = os.getenv("DISCORD_TOKEN")
 
-jobs:
-  build:
-    runs-on: ubuntu-latest
+# التحقق من أن التوكن موجود وليست قيمته فارغة
+if not TOKEN:
+    raise ValueError("خطأ: لم يتم العثور على متغير البيئة DISCORD_TOKEN. تأكد من إضافته في إعدادات المنصة.")
 
-    steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
+# إعداد الصلاحيات (Intents) الأساسية للبوت
+intents = discord.Intents.default()
+intents.message_content = True
 
-    - name: Set up Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.10'
+client = discord.Client(intents=intents)
 
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install -r requirements.txt
+@client.event
+async def on_ready():
+    print(f'Logged in as {client.user} successfully!')
 
-    - name: Run bot
-      env:
-        TOKEN: ${{ secrets.TOKEN }}
-        GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-      run: |
-        python main.pyg
+# تشغيل البوت بالتوكن
+client.run(TOKEN)
