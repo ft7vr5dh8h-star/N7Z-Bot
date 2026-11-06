@@ -384,4 +384,4 @@ async def setup_tickets(interaction: discord.Interaction):
 async def on_ready():
     print(f'Logged in as {bot.user.name} - Channel Guide AI Ready!')
 
-bot.run(os.getenv('TOKEN'))
+bot.run(os.getenv('DISCORD_TOKEN') or os.getenv('TOKEN'))
