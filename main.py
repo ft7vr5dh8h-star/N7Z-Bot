@@ -5,31 +5,24 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 from discord.ui import Button, View, Select
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 
 # إعداد مفتاح Gemini الرسمي
-GENAI_API_KEY = "حط_مفتاحك_هنا_مباشرة"
-if GENAI_API_KEY:
-    genai.configure(api_key=GENAI_API_KEY)
-if GENAI_API_KEY:
-    genai.configure(api_key=GENAI_API_KEY)
-    generation_config = {
-        "temperature": 0.7,
-    }
-    # تعليمات النظام لنوجه البوت بدقة لمساعدة أعضاء السيرفر وتوجيههم للرومات
-    system_instruction = (
-        "أنت مشرف ذكي ومساعد احترافي لسيرفر ديسكورد. "
-        "مهمتك هي مساعدة الأعضاء والإجابة على استفساراتهم باللغة العربية الفصحى وبطريقة ودية. "
-        "إذا سألك عضو عن مكان روم معين في السيرفر (مثل روم التذاكر، روم الستريك، روم الفويس، إلخ)، "
-        "أجب باختصار ووضح له اسم الروم أو أين يجدها بدقة."
-    )
-    ai_model = genai.GenerativeModel(
-        model_name="gemini-1.5-flash",
-        generation_config=generation_config,
-        system_instruction=system_instruction
-    )
-else:
-    ai_model = None
+GENAI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip().strip('"\'')
+# تعليمات النظام لنوجه البوت بدقة لمساعدة أعضاء السيرفر وتوجيههم للرومات
+system_instruction = (
+    "أنت مشرف ذكي ومساعد احترافي لسيرفر ديسكورد. "
+    "مهمتك هي مساعدة الأعضاء والإجابة على استفساراتهم باللغة العربية الفصحى وبطريقة ودية. "
+    "إذا سألك عضو عن مكان روم معين في السيرفر (مثل روم التذاكر، روم الستريك، روم الفويس، إلخ)، "
+    "أجب باختصار ووضح له اسم الروم أو أين يجدها بدقة. "
+    "ساعد المستخدمين في كتابة وشرح وتصحيح أكواد بايثون (Python) وتطوير التطبيقات. "
+    "التزم بالمعايير الأخلاقية والتقنية وامتنع عن تقديم أكواد أو أدوات ضارة "
+    "(مثل هجمات التعطيل أو الاختراق)، وقدّم نصائح الأمان والحماية بدلاً منها."
+)
+GEMINI_MODEL = "gemini-2.5-flash"
+ai_client = genai.Client(api_key=GENAI_API_KEY) if GENAI_API_KEY else None
+ai_config = types.GenerateContentConfig(temperature=0.7, system_instruction=system_instruction)
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -67,7 +60,7 @@ REACTION_ROLES = {}
 
 # ==================== 🤖 دالة ذكاء Gemini الاصطناعي وتوجيه الرومات ====================
 async def get_gemini_response(prompt: str, guild: discord.guild = None) -> str:
-    if not ai_model:
+    if not ai_client:
         return "⚠️ مفتاح GEMINI_API_KEY غير مضاف في إعدادات المنصة (Secrets)."
     try:
         # إذا سأل العضو عن الرومات، نعطي البوت قائمة بأسماء رومات السيرفر عشان يوجهه صح
@@ -78,8 +71,9 @@ async def get_gemini_response(prompt: str, guild: discord.guild = None) -> str:
 
         full_prompt = prompt + channels_info
         
-        loop = asyncio.get_event_loop()
-        response = await ai_model.generate_content_async(full_prompt)
+        response = await ai_client.aio.models.generate_content(
+            model=GEMINI_MODEL, contents=full_prompt, config=ai_config
+        )
         return response.text if response.text else "عذراً، لم أستطع صياغة إجابة."
     except Exception as e:
         print(f"Gemini AI Error: {e}")
@@ -111,8 +105,8 @@ async def on_message(message):
     content = message.content.strip()
 
     # الرد التلقائي عند منشن البوت (يوجه العضو للروم المطلوب)
-    if bot.user.mentioned_in(message) and not message.mention_everyone:
-        clean_content = content.replace(f'<@{bot.user.id}>', '').replace(f'<@!{bot.user.id}>', '').strip()
+    if (bot.user.mentioned_in(message) and not message.mention_everyone) or content.startswith("!ai"):
+        clean_content = content.replace(f'<@{bot.user.id}>', '').replace(f'<@!{bot.user.id}>', '').replace('!ai', '', 1).strip()
         if clean_content:
             async with message.channel.typing():
                 ai_reply = await get_gemini_response(clean_content, message.guild)
@@ -384,4 +378,7 @@ async def setup_tickets(interaction: discord.Interaction):
 async def on_ready():
     print(f'Logged in as {bot.user.name} - Channel Guide AI Ready!')
 
-bot.run(os.getenv('TOKEN'))
+_token = (os.getenv('DISCORD_TOKEN') or os.getenv('TOKEN') or '').strip().strip('"\'')
+if not _token:
+    raise SystemExit('DISCORD_TOKEN is not set')
+bot.run(_token)
