@@ -20,7 +20,7 @@ system_instruction = (
     "التزم بالمعايير الأخلاقية والتقنية وامتنع عن تقديم أكواد أو أدوات ضارة "
     "(مثل هجمات التعطيل أو الاختراق)، وقدّم نصائح الأمان والحماية بدلاً منها."
 )
-GEMINI_MODEL = "gemini-2.5-flash"
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
 ai_client = genai.Client(api_key=GENAI_API_KEY) if GENAI_API_KEY else None
 ai_config = types.GenerateContentConfig(temperature=0.7, system_instruction=system_instruction)
 
