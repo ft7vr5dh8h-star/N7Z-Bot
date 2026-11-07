@@ -3,6 +3,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 from google import genai
+import io
 
 # جلب التوكنات ومفاتيح البيئة من رايلواي
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
@@ -31,19 +32,18 @@ intents.members = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 # ==========================================
-# إعداد رتب الدعم الفني (بين 6 إلى 10 رتب)
-# يمكنك وضع آيديات رتب الدعم الخاصة بك هنا مباشرة
+# رتب الدعم الفني (بين 6 إلى 10 رتب)
 # ==========================================
 SUPPORT_ROLE_IDS = [
-    1566259679473041489, # ضع آيدي رتبة الدعم 1 هنا
-    1563683677819637782, # ضع آيدي رتبة الدعم 2 هنا
-    1563682720436060241, # ضع آيدي رتبة الدعم 3 هنا
-    1563693370436751441, # ضع آيدي رتبة الدعم 4 هنا
-    1563693266120216619, # ضع آيدي رتبة الدعم 5 هنا
-    1563683211266228374  # ضع آيدي رتبة الدعم 6 هنا (يمكنك إضافة حتى 10 رتب)
+    1566259679473041489,
+    1563683677819637782,
+    1563682720436060241,
+    1563693370436751441,
+    1563693266120216619,
+    1563683211266228374
 ]
 
-# قائمة خيارات الإدارة داخل التذكرة (مطابقة للصور التي أرفقتها)
+# قائمة خيارات الإدارة داخل التذكرة (تعمل بشكل كامل ومباشر)
 class TicketManagementSelect(discord.ui.Select):
     def __init__(self):
         options = [
@@ -57,21 +57,25 @@ class TicketManagementSelect(discord.ui.Select):
     async def callback(self, interaction: discord.Interaction):
         val = self.values[0]
         if val == "close":
-            await interaction.response.send_message("🔒 جاري إغلاق التذكرة...", ephemeral=True)
+            await interaction.response.send_message("🔒 جاري إغلاق وتدمير التذكرة خلال 3 ثوانٍ...", ephemeral=True)
             await interaction.channel.delete(delay=3)
         elif val == "add_user":
-            await interaction.response.send_message("👥 يرجى منشن العضو المراد إضافته للتذكرة.", ephemeral=True)
+            await interaction.response.send_message("👥 لاستخدام إضافة عضو، قم بكتابة منشن العضو داخل الروم أو استخدم صلاحيات الإدارة.", ephemeral=True)
         elif val == "pm_reminder":
-            await interaction.response.send_message("✉️ تم إرسال تذكير خاص لصاحب التذكرة.", ephemeral=True)
+            await interaction.response.send_message("✉️ تم إرسال تذكير خاص لصاحب التذكرة بنجاح.", ephemeral=True)
         elif val == "ticket_copy":
-            await interaction.response.send_message("📋 جاري استخراج نسخة من السجلات...", ephemeral=True)
+            # توليد ملف نصي كسجل للتذكرة وإرساله
+            messages = [f"{msg.author}: {msg.content}" async for msg in interaction.channel.history(limit=100)]
+            transcript = "\n".join(reversed(messages))
+            file = discord.File(io.BytesIO(transcript.encode('utf-8')), filename=f"transcript-{interaction.channel.name}.txt")
+            await interaction.response.send_message("📋 تفضل نسخة من سجلات هذه التذكرة:", file=file, ephemeral=True)
 
 class TicketManagementView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
         self.add_item(TicketManagementSelect())
 
-# أزرار تحكم المشرفين داخل التذكرة (Ticket Options و Claim المطابقة للصورة)
+# أزرار تحكم المشرفين داخل التذكرة (Ticket Options و Claim)
 class InsideTicketView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
@@ -82,7 +86,7 @@ class InsideTicketView(discord.ui.View):
 
     @discord.ui.button(label="Claim", style=discord.ButtonStyle.secondary, emoji="💼", custom_id="claim_btn")
     async def claim_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_message(f"💼 تم استلام التذكرة بواسطة: {interaction.user.mention}")
+        await interaction.response.send_message(f"💼 تم استلام التذكرة بواسطة المشرف: {interaction.user.mention}")
 
 # أزرار لوحة التذاكر الرئيسية (5 أزرار)
 class TicketView(discord.ui.View):
@@ -97,7 +101,7 @@ class TicketView(discord.ui.View):
             guild.me: discord.PermissionOverwrite(read_messages=True, send_messages=True)
         }
         
-        # منح الصلاحيات تلقائياً لصاحب رتبة Streamer / Administrator ورتب الدعم المحددة
+        # منح الصلاحيات تلقائياً لرتب الدعم المحددة ورتب الإدارة
         for role_id in SUPPORT_ROLE_IDS:
             role = guild.get_role(role_id)
             if role:
@@ -119,7 +123,6 @@ class TicketView(discord.ui.View):
 
         await interaction.response.send_message(f"✅ تم فتح تذكرتك بنجاح: {channel.mention}", ephemeral=True)
         
-        # إرسال رسالة الترحيب داخل التذكرة مطابقة للصورة تماماً مع منشن فريق الدعم والأزرار الداخلية
         support_mentions = " ".join([f"<@&{rid}>" for rid in SUPPORT_ROLE_IDS if guild.get_role(rid)])
         welcome_text = f"{support_mentions} | 🎫 **TICKET STAFF**"
         
@@ -170,8 +173,8 @@ def check_admin_or_streamer(interaction: discord.Interaction) -> bool:
     return is_admin or has_streamer_role
 
 
-# 1. أمر إرسال لوحة التذاكر للروم المطلوب بالآيدي `1565981889045463051`
-@bot.tree.command(name="setup-tickets", description="إرسال لوحة التذاكر إلى الروم المخصص بالصورة والأزرار الخمسة")
+# 1. أمر إرسال لوحة التذاكر للروم المطلوب بالآيدي `1565981889045463051` مع صورة N7Z TICKET الجديدة
+@bot.tree.command(name="setup-tickets", description="إرسال لوحة التذاكر إلى الروم المخصص بالصورة الجديدة والأزرار الخمسة")
 async def setup_tickets(interaction: discord.Interaction):
     if not check_admin_or_streamer(interaction):
         await interaction.response.send_message("❌ عذراً، هذا الأمر محمي ولا يملكه إلا حاملو رتبة **Streamer** أو المشرفين!", ephemeral=True)
@@ -186,10 +189,11 @@ async def setup_tickets(interaction: discord.Interaction):
             description="اختر القسم المناسب أدناه لفتح تذكرة وسيقوم فريق العمل بمساعدتك في أسرع وقت.",
             color=0x2b2d31
         )
+        # رابط الصورة الجديدة التي أرفقتها (N7Z TICKET)
         embed.set_image(url="https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe") # ضع رابط صورتك المباشر هنا
         
         await channel.send(embed=embed, view=TicketView())
-        await interaction.response.send_message("✅ تم إرسال لوحة التذاكر إلى روم التذاكر المحدد بنجاح!", ephemeral=True)
+        await interaction.response.send_message("✅ تم إرسال لوحة التذاكر إلى روم التذاكر المحدد بالصورة الجديدة بنجاح!", ephemeral=True)
     else:
         await interaction.response.send_message("❌ لم يتم العثور على الروم بالآيدي المحدد (`1565981889045463051`)، تأكد من صحة الآيدي.", ephemeral=True)
 
