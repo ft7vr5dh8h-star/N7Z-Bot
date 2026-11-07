@@ -43,7 +43,10 @@ SUPPORT_ROLE_IDS = [
     1563683211266228374
 ]
 
-# قائمة خيارات الإدارة داخل التذكرة (تم إصلاح أمر الإغلاق والخيارات)
+# آيدي روم السجلات الذي طلبته
+LOGS_CHANNEL_ID = 1568491490265661440
+
+# قائمة خيارات الإدارة داخل التذكرة
 class TicketManagementSelect(discord.ui.Select):
     def __init__(self):
         options = [
@@ -57,8 +60,22 @@ class TicketManagementSelect(discord.ui.Select):
     async def callback(self, interaction: discord.Interaction):
         val = self.values[0]
         if val == "close":
-            await interaction.response.send_message("🔒 جاري إغلاق التذكرة...", ephemeral=True)
-            await interaction.channel.delete(delay=2)
+            await interaction.response.send_message("🔒 جاري إغلاق التذكرة وتصدير السجلات...", ephemeral=True)
+            
+            # جلب روم السجلات
+            logs_channel = interaction.guild.get_channel(LOGS_CHANNEL_ID)
+            
+            # جمع رسائل التذكرة وتصديرها كملف
+            messages = [f"[{msg.created_at.strftime('%Y-%m-%d %H:%M:%S')}] {msg.author}: {msg.content}" async for msg in interaction.channel.history(limit=500)]
+            transcript_text = f"--- سجلات تذكرة: {interaction.channel.name} ---\nأغلق بواسطة: {interaction.user}\n\n" + "\n".join(reversed(messages))
+            file = discord.File(io.BytesIO(transcript_text.encode('utf-8')), filename=f"transcript-{interaction.channel.name}.txt")
+            
+            if logs_channel:
+                await logs_channel.send(content=f"📁 **سجلات التذكرة المغلقة:** `{interaction.channel.name}`\nبواسطة المشرف: {interaction.user.mention}", file=file)
+            
+            # حذف روم التذكرة بعد 3 ثوانٍ
+            await interaction.channel.delete(delay=3)
+
         elif val == "add_user":
             await interaction.response.send_message("👥 لاستخدام إضافة عضو، قم بمنشن العضو المطلوب داخل التذكرة.", ephemeral=True)
         elif val == "pm_reminder":
@@ -87,7 +104,7 @@ class InsideTicketView(discord.ui.View):
     async def claim_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_message(f"💼 تم استلام التذكرة بواسطة المشرف: {interaction.user.mention}")
 
-# أزرار لوحة التذاكر الرئيسية (5 أزرار)
+# أزرار لوحة التذاكر الرئيسية (5 أزرار بدون صور)
 class TicketView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
@@ -171,7 +188,7 @@ def check_admin_or_streamer(interaction: discord.Interaction) -> bool:
     return is_admin or has_streamer_role
 
 
-# 1. أمر إرسال لوحة التذاكر (بدون أي صور تماماً، نص وتصميم نقي مع الأزرار الخمسة)
+# 1. أمر إرسال لوحة التذاكر (بدون صورة)
 @bot.tree.command(name="setup-tickets", description="إرسال لوحة التذاكر إلى الروم المخصص بدون صورة")
 async def setup_tickets(interaction: discord.Interaction):
     if not check_admin_or_streamer(interaction):
@@ -187,8 +204,6 @@ async def setup_tickets(interaction: discord.Interaction):
             description="اختر القسم المناسب أدناه لفتح تذكرة وسيقوم فريق العمل بمساعدتك في أسرع وقت.",
             color=0x2b2d31
         )
-        # تم حذف سطر وضع الصورة نهائياً لتكون بدون صورة
-        
         await channel.send(embed=embed, view=TicketView())
         await interaction.response.send_message("✅ تم إرسال لوحة التذاكر بدون صورة إلى روم التذاكر المحدد بنجاح!", ephemeral=True)
     else:
