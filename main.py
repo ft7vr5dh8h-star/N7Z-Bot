@@ -1,411 +1,218 @@
 import os
-import asyncio
-from collections import defaultdict
 import discord
 from discord import app_commands
 from discord.ext import commands
-from discord.ui import Button, View, Select
 from google import genai
-from google.genai import types
 
-# إعداد مفتاح Gemini الرسمي
-GENAI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip().strip('"\'')
-# تعليمات النظام لنوجه البوت بدقة لمساعدة أعضاء السيرفر وتوجيههم للرومات
-system_instruction = (
-    "أنت مشرف ذكي ومساعد احترافي لسيرفر ديسكورد. "
-    "مهمتك هي مساعدة الأعضاء والإجابة على استفساراتهم باللغة العربية الفصحى وبطريقة ودية. "
-    "إذا سألك عضو عن مكان روم معين في السيرفر (مثل روم التذاكر، روم الستريك، روم الفويس، إلخ)، "
-    "أجب باختصار ووضح له اسم الروم أو أين يجدها بدقة. "
-    "ساعد المستخدمين في كتابة وشرح وتصحيح أكواد بايثون (Python) وتطوير التطبيقات. "
-    "التزم بالمعايير الأخلاقية والتقنية وامتنع عن تقديم أكواد أو أدوات ضارة "
-    "(مثل هجمات التعطيل أو الاختراق)، وقدّم نصائح الأمان والحماية بدلاً منها."
-)
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
-GEMINI_FALLBACK_MODELS = [m.strip() for m in os.getenv("GEMINI_FALLBACK_MODELS", "gemini-2.5-flash-lite,gemini-2.0-flash").split(",") if m.strip()]
-AI_TOTAL_TIMEOUT = 28
-AI_ATTEMPT_TIMEOUT = 10
-ai_client = genai.Client(api_key=GENAI_API_KEY) if GENAI_API_KEY else None
-ai_config = types.GenerateContentConfig(temperature=0.7, system_instruction=system_instruction)
+# جلب التوكنات ومفاتيح البيئة من رايلواي
+DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
+if not DISCORD_TOKEN:
+    raise ValueError("خطأ: لم يتم العثور على متغير البيئة DISCORD_TOKEN.")
+
+if not GEMINI_API_KEY:
+    raise ValueError("خطأ: لم يتم العثور على متغير البيئة GEMINI_API_KEY.")
+
+# إعداد عميل Gemini الذكي
+ai_client = genai.Client(api_key=GEMINI_API_KEY)
+
+# إرشادات النظام الأمنية والبرمجية
+SYSTEM_INSTRUCTIONS = """
+أنت مساعد ذكي ومخصص حصرياً لبوت ديسكورد (N7Z-Bot). مهامك وضوابطك هي:
+1. الإجابة على الأسئلة العامة بدقة واحترافية عالية.
+2. مساعدة المستخدمين في كتابة، شرح، وتصحيح أكواد بايثون (Python) وتطوير التطبيقات البرمجية.
+3. [نظام الحماية والأمان]: يمنع منعاً باتاً تقديم أو توليد أو شرح أي أكواد أو أدوات تخص هجمات التعطيل (DDoS) أو الاختراق أو التخريب السيبراني، ويجب توجيه المستخدم دائماً نحو أفضل ممارسات الحماية وأمن السيرفرات.
+"""
+
+# إعداد الصلاحيات والبوت للأوامر
 intents = discord.Intents.default()
 intents.message_content = True
-intents.members = True
 intents.guilds = True
-intents.reactions = True
+intents.members = True
 
-GUILD_ID = 1563678057863057559  # آيدي سيرفرك
+bot = commands.Bot(command_prefix="!", intents=intents)
 
-class TicketBot(commands.Bot):
+# نظام أزرار التذاكر (6 أزرار تفاعلية)
+class TicketView(discord.ui.View):
     def __init__(self):
-        super().__init__(command_prefix="!", intents=intents)
+        super().__init__(timeout=None)
 
-    async def setup_hook(self):
-        guild = discord.Object(id=GUILD_ID)
-        self.tree.copy_global_to(guild=guild)
-        await self.tree.sync(guild=guild)
-        print("Slash commands synced instantly to your server!")
-
-bot = TicketBot()
-
-SUPPORT_ROLE_ID = 1563683677819637782
-LOG_CHANNEL_ID = 1565578863277248655
-CATEGORY_ID = 1563682943333965884
-
-TARGET_ROLE_IDS = [
-    1563693370436751441, 1563683211266228374, 1563749745116053605,
-    1563693266120216619, 1563690204932481165, 1563690329234866196,
-    1563693109903097886, 1563692936368234599, 1563690405101310142,
-    1563690490346348604, 1563692859377590342, 1563693032715591770,
-    1563682396958621848, 1566075985022029826
-]
-
-REACTION_ROLES = {}
-
-# ==================== 🤖 دالة ذكاء Gemini الاصطناعي وتوجيه الرومات ====================
-async def get_gemini_response(prompt: str, guild: discord.guild = None) -> str:
-    if not ai_client:
-        return "⚠️ مفتاح GEMINI_API_KEY غير مضاف في إعدادات المنصة (Secrets)."
-    try:
-        # إذا سأل العضو عن الرومات، نعطي البوت قائمة بأسماء رومات السيرفر عشان يوجهه صح
-        channels_info = ""
-        if guild:
-            channel_list = [c.name for c in guild.text_channels[:30]]
-            channels_info = f"\n(معلومات سياقية: رومات السيرفر الحالية هي: {', '.join(channel_list)})"
-
-        full_prompt = prompt + channels_info
+    async def create_ticket(self, interaction: discord.Interaction, ticket_type: str):
+        guild = interaction.guild
+        overwrites = {
+            guild.default_role: discord.PermissionOverwrite(read_messages=False),
+            interaction.user: discord.PermissionOverwrite(read_messages=True, send_messages=True),
+            guild.me: discord.PermissionOverwrite(read_messages=True, send_messages=True)
+        }
         
-        # Hard cap of 30s total: each attempt is time-limited, a failure or slow
-        # model moves straight on to the next one, cycling until the budget runs out.
-        models = [GEMINI_MODEL] + [m for m in GEMINI_FALLBACK_MODELS if m != GEMINI_MODEL]
-        loop = asyncio.get_running_loop()
-        deadline = loop.time() + AI_TOTAL_TIMEOUT
-        response = None
-        last_error = None
-        attempt = 0
-        while response is None:
-            remaining = deadline - loop.time()
-            if remaining < 2:
-                break
-            model = models[attempt % len(models)]
-            attempt += 1
-            try:
-                response = await asyncio.wait_for(
-                    ai_client.aio.models.generate_content(
-                        model=model, contents=full_prompt, config=ai_config
-                    ),
-                    timeout=min(AI_ATTEMPT_TIMEOUT, remaining),
-                )
-            except Exception as e:
-                last_error = e or asyncio.TimeoutError()
-                print(f"Gemini AI Error ({model}, attempt {attempt}): {repr(e)[:300]}")
-                await asyncio.sleep(0.5)
-        if response is None:
-            raise last_error or asyncio.TimeoutError()
-        return response.text if response.text else "عذراً، لم أستطع صياغة إجابة."
-    except Exception as e:
-        print(f"Gemini AI Error: {e}")
-        return "حدث خطأ مؤقت في الاتصال، يرجى المحاولة لاحقاً."
+        # منح الصلاحيات لرتب الإدارة والستريمر تلقائياً داخل التذكرة الجديدة
+        for role in guild.roles:
+            if role.name.lower() in ["streamer", "ستريمر", "admin", "administrator", "مشرف", "إدارة"]:
+                overwrites[role] = discord.PermissionOverwrite(read_messages=True, send_messages=True)
 
-@bot.tree.command(name="ai", description="التحدث مع ذكاء Gemini الاصطناعي")
-@app_commands.describe(prompt="اكتب سؤالك هنا")
-async def ai_command(interaction: discord.Interaction, prompt: str):
-    await interaction.response.defer(thinking=True)
-    reply = await get_gemini_response(prompt, interaction.guild)
-    
-    if len(reply) > 2000:
-        reply = reply[:1990] + "..."
+        category = discord.utils.get(guild.categories, name="التذاكر")
+        if not category:
+            category = await guild.create_category("التذاكر")
+
+        channel = await guild.create_text_channel(
+            name=f"tkt-{ticket_type}-{interaction.user.name}",
+            category=category,
+            overwrites=overwrites
+        )
+
+        await interaction.response.send_message(f"✅ تم فتح تذكرتك بنجاح: {channel.mention}", ephemeral=True)
+        await channel.send(f"مرحباً {interaction.user.mention}! تم فتح تذكرة **{ticket_type}**. سيتولى فريق العمل الرد عليك قريباً.")
+
+    @discord.ui.button(label="استفسار 🙋‍♂️", style=discord.ButtonStyle.primary, custom_id="tkt_inquiry")
+    async def inquiry_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.create_ticket(interaction, "استفسار")
+
+    @discord.ui.button(label="شراء 🛒", style=discord.ButtonStyle.secondary, custom_id="tkt_buy")
+    async def buy_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.create_ticket(interaction, "شراء")
+
+    @discord.ui.button(label="توثيق بنات ✔️", style=discord.ButtonStyle.success, custom_id="tkt_verify")
+    async def verify_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.create_ticket(interaction, "توثيق-بنات")
+
+    @discord.ui.button(label="طلب اونر 👑", style=discord.ButtonStyle.primary, custom_id="tkt_owner")
+    async def owner_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.create_ticket(interaction, "طلب-اونر")
+
+    @discord.ui.button(label="شراكه 🤝", style=discord.ButtonStyle.blurple, custom_id="tkt_partnership")
+    async def partnership_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.create_ticket(interaction, "شراكه")
+
+    @discord.ui.button(label="سجلات 📁", style=discord.ButtonStyle.danger, custom_id="tkt_logs")
+    async def logs_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.create_ticket(interaction, "سجلات")
+
+
+@bot.event
+async def on_ready():
+    bot.add_view(TicketView())
+    try:
+        synced = await bot.tree.sync()
+        print(f"Synced {len(synced)} slash commands successfully.")
+    except Exception as e:
+        print(f"Failed to sync slash commands: {e}")
+    print(f'Logged in as {bot.user} successfully, N7Z-Bot Slash System active!')
+
+
+# دالة التحقق من الصلاحيات (Administrator أو رتبة Streamer)
+def check_admin_or_streamer(interaction: discord.Interaction) -> bool:
+    is_admin = interaction.user.guild_permissions.administrator
+    has_streamer_role = any(role.name.lower() in ["streamer", "ستريمر"] for role in interaction.user.roles)
+    return is_admin or has_streamer_role
+
+
+# 1. أمر سلاش لتجميع وتأطير لوحة التذاكر: /setup-tickets
+@bot.tree.command(name="setup-tickets", description="إرسال لوحة التذاكر إلى الروم المخصص")
+async def setup_tickets(interaction: discord.Interaction):
+    if not check_admin_or_streamer(interaction):
+        await interaction.response.send_message("❌ عذراً، هذا الأمر محمي ولا يملكه إلا حاملو رتبة **Streamer** أو المشرفين!", ephemeral=True)
+        return
+
+    target_channel_id = 1568491490265661440
+    channel = bot.get_channel(target_channel_id)
+
+    if channel:
+        embed = discord.Embed(
+            title="نظام تذاكر N7Z المحمي",
+            description="اختر القسم المناسب أدناه لفتح تذكرة وسيقوم فريق العمل بمساعدتك في أسرع وقت.",
+            color=0x2b2d31
+        )
+        embed.set_image(url="https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe")
         
-    embed = discord.Embed(
-        title="✨ إجابة المساعد الذكي",
-        description=reply,
-        color=discord.Color.blue()
-    )
-    embed.set_footer(text=f"السؤال: {prompt[:50]}")
-    await interaction.followup.send(embed=embed)
+        await channel.send(embed=embed, view=TicketView())
+        await interaction.response.send_message("✅ تم إرسال لوحة التذاكر إلى الروم المحدد بنجاح!", ephemeral=True)
+    else:
+        await interaction.response.send_message("❌ لم يتم العثور على الروم بالآيدي المحدد، تأكد من صحة الآيدي.", ephemeral=True)
 
-# ==================== 💬 الرد عند المنشن والتوجيه التلقائي ====================
-@bot.event
-async def on_message(message):
-    if message.author.bot:
-        return
 
-    content = message.content.strip()
-
-    # الرد التلقائي عند منشن البوت (يوجه العضو للروم المطلوب)
-    if (bot.user.mentioned_in(message) and not message.mention_everyone) or content.startswith("!ai"):
-        clean_content = content.replace(f'<@{bot.user.id}>', '').replace(f'<@!{bot.user.id}>', '').replace('!ai', '', 1).strip()
-        if clean_content:
-            async with message.channel.typing():
-                ai_reply = await get_gemini_response(clean_content, message.guild)
-                if len(ai_reply) > 2000:
-                    ai_reply = ai_reply[:1990] + "..."
-                await message.reply(ai_reply)
-            return
-
-    if content == ".":
-        await message.channel.send("ارحب")
-        return
-
-    if content == "السلام عليكم":
-        await message.channel.send("عليكم السلام")
-        return
-
-    if content.startswith("بنعالي"):
-        if not message.author.guild_permissions.kick_members:
-            await message.channel.send("❌ ما عندك صلاحية استخدام هذا الأمر!")
-            return
-        if message.mentions:
-            target = message.mentions[0]
-            try:
-                await target.kick(reason=f"تم الكيك بواسطة {message.author}")
-                await message.channel.send(f"👞 تم معاطاة {target.mention} بنعالي (Kick) بنجاح!")
-            except:
-                await message.channel.send("❌ ما قدرت أعطيه كيك، ارفع رتبة البوت فوق رتبته.")
-        else:
-            await message.channel.send("⚠️ لازم تسوي منشن للشخص مع الأمر! مثال: `بنعالي @شخص`")
-        return
-
-    if content.startswith("اسكت"):
-        if not message.author.guild_permissions.moderate_members:
-            await message.channel.send("❌ ما عندك صلاحية استخدام هذا الأمر!")
-            return
-        if message.mentions:
-            target = message.mentions[0]
-            try:
-                await target.timeout(discord.utils.utcnow() + discord.timedelta(minutes=1), reason=f"اسكت بواسطة {message.author}")
-                await message.channel.send(f"🤫 تم إلقام {target.mention} تايم آوت لمدة دقيقة!")
-            except:
-                await message.channel.send("❌ ما قدرت أعطيه تايم آوت، ارفع رتبة البوت فوق رتبته.")
-        else:
-            await message.channel.send("⚠️ لازم تسوي منشن للشخص مع الأمر! مثال: `اسكت @شخص`")
-        return
-
-    await bot.process_commands(message)
-
-# ==================== 🎭 رولات الرياكشن ====================
-@bot.tree.command(name="setup_reaction_roles", description="إرسال رسالة رولات الرياكشن التلقائية")
-@app_commands.checks.has_permissions(administrator=True)
-@app_commands.describe(role="الرتبة التي ستعطى للعضو", emoji="الإيموجي المطلوب")
-async def setup_reaction_roles(interaction: discord.Interaction, role: discord.Role, emoji: str):
-    embed = discord.Embed(
-        title="✨ نظام رولات السيرفر ✨",
-        description=f"للحصول على رول {role.mention} ، اضغط على التفاعل ({emoji}) أدناه!",
-        color=discord.Color.gold()
-    )
-    message = await interaction.channel.send(embed=embed)
-    try:
-        await message.add_reaction(emoji)
-        REACTION_ROLES[emoji] = role.id
-        await interaction.response.send_message("✅ تم إنشاء رسالة رولات الرياكشن بنجاح!", ephemeral=True)
-    except Exception as e:
-        await interaction.response.send_message(f"❌ حدث خطأ: {e}", ephemeral=True)
-
-@bot.event
-async def on_raw_reaction_add(payload):
-    if payload.member.bot:
-        return
-    emoji = str(payload.emoji)
-    if emoji in REACTION_ROLES:
-        guild = bot.get_guild(payload.guild_id)
-        if guild:
-            role = guild.get_role(REACTION_ROLES[emoji])
-            if role:
-                try:
-                    await payload.member.add_roles(role)
-                except Exception as e:
-                    print(f"Reaction add error: {e}")
-
-@bot.event
-async def on_raw_reaction_remove(payload):
-    emoji = str(payload.emoji)
-    if emoji in REACTION_ROLES:
-        guild = bot.get_guild(payload.guild_id)
-        if guild:
-            member = guild.get_member(payload.user_id)
-            if member and not member.bot:
-                role = guild.get_role(REACTION_ROLES[emoji])
-                if role:
-                    try:
-                        await member.remove_roles(role)
-                    except Exception as e:
-                        print(f"Reaction remove error: {e}")
-
-# ==================== 🛡️ تأمين الرتب ====================
-@bot.tree.command(name="setup_roles", description="تأمين وضبط صلاحيات الرتب المحددة")
-@app_commands.checks.has_permissions(administrator=True)
-async def setup_roles(interaction: discord.Interaction):
-    await interaction.response.send_message("⏳ جاري تأمين الرتب...", ephemeral=True)
-    guild = interaction.guild
-    success_count = 0
-    try:
-        default_role = guild.default_role
-        await default_role.edit(permissions=discord.Permissions(
-            send_messages=True, read_messages=True, connect=True, speak=True,
-            add_reactions=True, read_message_history=True, kick_members=False,
-            ban_members=False, manage_roles=False, manage_channels=False, administrator=False
-        ))
-    except Exception as e:
-        print(f"Error updating @everyone: {e}")
-
-    for role_id in TARGET_ROLE_IDS:
-        role = guild.get_role(role_id)
-        if role:
-            try:
-                await role.edit(permissions=discord.Permissions(
-                    send_messages=True, read_messages=True, connect=True, speak=True,
-                    add_reactions=True, read_message_history=True, kick_members=False,
-                    ban_members=False, manage_roles=False, manage_channels=False, administrator=False
-                ))
-                success_count += 1
-            except Exception as e:
-                print(f"Failed to update role {role_id}: {e}")
-
-    await interaction.followup.send(f"✅ تم تأمين: `{success_count}` رتبة بنجاح!", ephemeral=True)
-
-# ==================== 🛡️ Anti-Nuke ====================
-deleted_channels_tracker = defaultdict(list)
-created_channels_tracker = defaultdict(list)
-
-@bot.event
-async def on_guild_channel_delete(channel):
-    if channel.category and channel.category.id == CATEGORY_ID:
-        return
-    try:
-        async for entry in channel.guild.audit_logs(limit=1, action=discord.AuditLogAction.channel_delete):
-            user = entry.user
-            if user.bot or user.guild_permissions.administrator:
-                return
-            now = asyncio.get_event_loop().time()
-            deleted_channels_tracker[user.id] = [t for t in deleted_channels_tracker[user.id] if now - t < 60]
-            deleted_channels_tracker[user.id].append(now)
-            if len(deleted_channels_tracker[user.id]) >= 2:
-                log_channel = channel.guild.get_channel(LOG_CHANNEL_ID)
-                try:
-                    await user.timeout(discord.utils.utcnow() + discord.timedelta(hours=1), reason="حماية السيرفر: حذف رومات!")
-                except:
-                    pass
-                if log_channel:
-                    await log_channel.send(f"🚨 **Anti-Nuke:** {user.mention} تم إيقافه بسبب حذف رومات.")
-                break
-    except Exception as e:
-        print(f"Anti-nuke error: {e}")
-
-@bot.event
-async def on_guild_channel_create(channel):
-    try:
-        async for entry in channel.guild.audit_logs(limit=1, action=discord.AuditLogAction.channel_create):
-            user = entry.user
-            if user.bot or user.guild_permissions.administrator:
-                return
-            now = asyncio.get_event_loop().time()
-            created_channels_tracker[user.id] = [t for t in created_channels_tracker[user.id] if now - t < 60]
-            created_channels_tracker[user.id].append(now)
-            if len(created_channels_tracker[user.id]) >= 5:
-                log_channel = channel.guild.get_channel(LOG_CHANNEL_ID)
-                try:
-                    await user.timeout(discord.utils.utcnow() + discord.timedelta(hours=1), reason="حماية السيرفر: إنشاء رومات بكثرة!")
-                except:
-                    pass
-                if log_channel:
-                    await log_channel.send(f"🚨 **Anti-Nuke:** {user.mention} تم إيقافه بسبب إنشاء رومات كثيرة.")
-                break
-    except Exception as e:
-        print(f"Anti-nuke create error: {e}")
-
-# ==================== 📢 Broadcast ====================
-@bot.tree.command(name="broadcast", description="إرسال برودكاست للأعضاء")
-@app_commands.checks.has_permissions(administrator=True)
-@app_commands.describe(message="النص المراد إرساله")
+# 2. أمر سلاش للبرودكاست بالخاص مع منشن العضو: /broadcast [message]
+@bot.tree.command(name="broadcast", description="إرسال برودكاست لجميع الأعضاء بالخاص مع منشن في النهاية")
+@app_commands.describe(message="نص الرسالة المراد إرسالها للجميع بالخاص")
 async def broadcast(interaction: discord.Interaction, message: str):
-    await interaction.response.send_message("⏳ جاري إرسال البرودكاست...", ephemeral=True)
-    success, failed = 0, 0
+    if not check_admin_or_streamer(interaction):
+        await interaction.response.send_message("❌ عذراً، أمر البرودكاست مخصص فقط لحاملي رتبة **Streamer** أو الإدارة!", ephemeral=True)
+        return
+
+    await interaction.response.send_message("⏳ جاري إرسال البرودكاست لجميع أعضاء السيرفر بالخاص...", ephemeral=True)
+
+    success_count = 0
+    fail_count = 0
+
     for member in interaction.guild.members:
         if member.bot:
             continue
         try:
-            await member.send(f"{message}\n\n{member.mention}")
-            success += 1
-            await asyncio.sleep(0.5)
+            dm_text = f"{message}\n\n{member.mention}"
+            await member.send(dm_text)
+            success_count += 1
         except Exception:
-            failed += 1
+            fail_count += 1
 
-    log_channel = interaction.guild.get_channel(LOG_CHANNEL_ID)
-    if log_channel:
-        await log_channel.send(f"📢 **تقرير البرودكاست:** نجح: `{success}` | فشل: `{failed}`")
+    await interaction.followup.send(f"✅ تم إرسال البرودكاست بنجاح!\n📤 تم الإرسال إلى: `{success_count}` عضو\n❌ فشل الإرسال (مغلق الخاص): `{fail_count}` عضو", ephemeral=True)
 
-# ==================== 🎫 التذاكر والتقييم ====================
-class RatingView(View):
-    def __init__(self):
-        super().__init__(timeout=None)
 
-    @discord.ui.select(
-        placeholder="تقييم خدمة الدعم الفني ⭐",
-        options=[
-            discord.SelectOption(label="ممتاز ⭐⭐⭐⭐⭐", value="5"),
-            discord.SelectOption(label="جيد جداً ⭐⭐⭐⭐", value="4"),
-            discord.SelectOption(label="مقبول ⭐⭐⭐", value="3"),
-            discord.SelectOption(label="سيء ⭐", value="1"),
-        ]
-    )
-    async def select_callback(self, interaction: discord.Interaction, select: Select):
-        await interaction.response.send_message(f"شكراً لتقييمك: {select.values[0]} نجوم! ❤️", ephemeral=True)
-
-class TicketControlView(View):
-    def __init__(self):
-        super().__init__(timeout=None)
-
-    @discord.ui.button(label="إغلاق التذكرة 🔒", style=discord.ButtonStyle.red, custom_id="close_ticket")
-    async def close_ticket(self, interaction: discord.Interaction, button: Button):
-        await interaction.response.send_message("جاري إغلاق التذكرة...", ephemeral=True)
-        try:
-            await interaction.user.send("كيف كانت تجربتك مع الدعم الفني؟", view=RatingView())
-        except:
-            pass
-        await interaction.channel.delete()
-
-class TicketSelectView(View):
-    def __init__(self):
-        super().__init__(timeout=None)
-
-    @discord.ui.select(
-        placeholder="اختر قسم الدعم الفني...",
-        custom_id="ticket_category_select",
-        options=[
-            discord.SelectOption(label="الدعم الفني العام", emoji="🛠️"),
-            discord.SelectOption(label="قسم الشكاوى", emoji="⚠️"),
-            discord.SelectOption(label="المبيعات والاشتراكات", emoji="💳"),
-        ]
-    )
-    async def select_callback(self, interaction: discord.Interaction, select: Select):
-        guild = interaction.guild
-        category = guild.get_channel(CATEGORY_ID)
-        support_role = guild.get_role(SUPPORT_ROLE_ID)
-        overwrites = {
-            guild.default_role: discord.PermissionOverwrite(read_messages=False),
-            interaction.user: discord.PermissionOverwrite(read_messages=True, send_messages=True),
-            support_role: discord.PermissionOverwrite(read_messages=True, send_messages=True)
-        }
-        ticket_channel = await guild.create_text_channel(
-            name=f"t-{select.values[0]}-{interaction.user.name}",
-            category=category,
-            overwrites=overwrites
+# 3. أمر سلاش للرد بالذكاء الاصطناعي: /ai [prompt]
+@bot.tree.command(name="ai", description="طرح سؤال أو طلب مساعدة برمجية من Gemini الذكي")
+@app_commands.describe(prompt="السؤال أو كود البايثون المراد شرحه أو الاستفسار عنه")
+async def ai(interaction: discord.Interaction, prompt: str):
+    await interaction.response.defer()
+    try:
+        response = ai_client.models.generate_content(
+            model='gemini-2.5-flash',
+            contents=prompt,
+            config={
+                'system_instruction': SYSTEM_INSTRUCTIONS
+            }
         )
-        await interaction.response.send_message(f"تم فتح تذكرتك: {ticket_channel.mention}", ephemeral=True)
-        embed = discord.Embed(title=f"تذكرة: {select.values[0]}", description=f"أهلاً بك {interaction.user.mention}، اكتب مشكلتك هنا.", color=discord.Color.green())
-        await ticket_channel.send(content=f"{interaction.user.mention} | {support_role.mention}", embed=embed, view=TicketControlView())
+        reply_text = response.text
+        if len(reply_text) > 2000:
+            for i in range(0, len(reply_text), 1900):
+                await interaction.followup.send(reply_text[i:i+1900])
+        else:
+            await interaction.followup.send(reply_text)
+    except Exception as e:
+        print(f"Error connecting to Gemini: {e}")
+        await interaction.followup.send("عذراً، حدث خطأ أثناء الاتصال بنظام الذكاء الاصطناعي.")
 
-@bot.tree.command(name="setup_tickets", description="إرسال لوحة التذاكر")
-@app_commands.checks.has_permissions(administrator=True)
-async def setup_tickets(interaction: discord.Interaction):
-    embed = discord.Embed(title="مركز الدعم الفني 🎫", description="اختر القسم المناسب لفتح تذكرة.", color=discord.Color.blue())
-    await interaction.channel.send(embed=embed, view=TicketSelectView())
-    await interaction.response.send_message("تم إرسال لوحة التذاكر بنجاح! ✅", ephemeral=True)
 
+# الرد الآلي عند منشنة البوت
 @bot.event
-async def on_ready():
-    print(f'Logged in as {bot.user.name} - Channel Guide AI Ready!')
+async def on_message(message):
+    if message.author == bot.user:
+        return
 
-_token = (os.getenv('DISCORD_TOKEN') or os.getenv('TOKEN') or '').strip().strip('"\'')
-if not _token:
-    raise SystemExit('DISCORD_TOKEN is not set')
-bot.run(_token)
+    if bot.user.mentioned_in(message):
+        user_message = message.content.replace(f'<@!{bot.user.id}>', '').replace(f'<@{bot.user.id}>', '').strip()
+        if not user_message:
+            await message.channel.send("أهلاً بك! يمكنك استخدام الأمر `/ai` أو كتابة سؤالك هنا للمساعدة.")
+            return
+
+        async with message.channel.typing():
+            try:
+                response = ai_client.models.generate_content(
+                    model='gemini-2.5-flash',
+                    contents=user_message,
+                    config={
+                        'system_instruction': SYSTEM_INSTRUCTIONS
+                    }
+                )
+                reply_text = response.text
+                if len(reply_text) > 2000:
+                    for i in range(0, len(reply_text), 1900):
+                        await message.channel.send(reply_text[i:i+1900])
+                else:
+                    await message.channel.send(reply_text)
+            except Exception as e:
+                print(f"Error: {e}")
+                await message.channel.send("عذراً، حدث خطأ أثناء الاتصال بالذكاء الاصطناعي.")
+
+    await bot.process_commands(message)
+
+# تشغيل البوت
+bot.run(DISCORD_TOKEN)
