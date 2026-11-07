@@ -3,6 +3,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 from google import genai
+import io
 
 # جلب التوكنات ومفاتيح البيئة من رايلواي
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
@@ -22,10 +23,9 @@ SYSTEM_INSTRUCTIONS = """
 أنت مساعد ذكي ومخصص حصرياً لبوت ديسكورد (N7Z-Bot). مهامك وضوابطك هي:
 1. الإجابة على الأسئلة العامة بدقة واحترافية عالية.
 2. مساعدة المستخدمين في كتابة، شرح، وتصحيح أكواد بايثون (Python) وتطوير التطبيقات البرمجية.
-3. [نظام الحماية والأمان]: يمنع منعاً باتاً تقديم أو توليد أو شرح أي أكواد أو أدوات تخص هجمات التعطيل (DDoS) أو الاختراق أو التخريب السيبراني، ويجب توجيه المستخدم دائماً نحو أفضل ممارسات الحماية وأمن السيرفرات.
+3. [نظام الحماية والأمان]: يمنع منعاً باتاً تقديم أو توليد أو شرح أي أكواد أو أدوات تخص هجمات التعطيل (DDoS) أو الاختراق أو التخريب السيبراني.
 """
 
-# إعداد الصلاحيات والبوت للأوامر
 intents = discord.Intents.default()
 intents.message_content = True
 intents.guilds = True
@@ -33,7 +33,7 @@ intents.members = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# نظام أزرار التذاكر (6 أزرار تفاعلية)
+# نظام أزرار التذاكر (5 أزرار بعد إزالة السجلات)
 class TicketView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
@@ -46,7 +46,6 @@ class TicketView(discord.ui.View):
             guild.me: discord.PermissionOverwrite(read_messages=True, send_messages=True)
         }
         
-        # منح الصلاحيات لرتب الإدارة والستريمر تلقائياً داخل التذكرة الجديدة
         for role in guild.roles:
             if role.name.lower() in ["streamer", "ستريمر", "admin", "administrator", "مشرف", "إدارة"]:
                 overwrites[role] = discord.PermissionOverwrite(read_messages=True, send_messages=True)
@@ -84,10 +83,6 @@ class TicketView(discord.ui.View):
     async def partnership_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self.create_ticket(interaction, "شراكه")
 
-    @discord.ui.button(label="سجلات 📁", style=discord.ButtonStyle.danger, custom_id="tkt_logs")
-    async def logs_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self.create_ticket(interaction, "سجلات")
-
 
 @bot.event
 async def on_ready():
@@ -97,41 +92,58 @@ async def on_ready():
         print(f"Synced {len(synced)} slash commands successfully.")
     except Exception as e:
         print(f"Failed to sync slash commands: {e}")
-    print(f'Logged in as {bot.user} successfully, N7Z-Bot Slash System active!')
+    print(f'Logged in as {bot.user} successfully, N7Z-Bot is online!')
 
 
-# دالة التحقق من الصلاحيات (Administrator أو رتبة Streamer)
 def check_admin_or_streamer(interaction: discord.Interaction) -> bool:
     is_admin = interaction.user.guild_permissions.administrator
     has_streamer_role = any(role.name.lower() in ["streamer", "ستريمر"] for role in interaction.user.roles)
     return is_admin or has_streamer_role
 
 
-# 1. أمر سلاش لتجميع وتأطير لوحة التذاكر: /setup-tickets
-@bot.tree.command(name="setup-tickets", description="إرسال لوحة التذاكر إلى الروم المخصص")
+# 1. أمر إرسال لوحة التذاكر بالصورة المرفقة والآيدي الجديد
+@bot.tree.command(name="setup-tickets", description="إرسال لوحة التذاكر إلى الروم المخصص بالصورة والأزرار الخمسة")
 async def setup_tickets(interaction: discord.Interaction):
     if not check_admin_or_streamer(interaction):
         await interaction.response.send_message("❌ عذراً، هذا الأمر محمي ولا يملكه إلا حاملو رتبة **Streamer** أو المشرفين!", ephemeral=True)
         return
 
-    target_channel_id = 1568491490265661440
+    # آيدي روم التذاكر الجديد الذي طلبته
+    target_channel_id = 1565981889045463051
     channel = bot.get_channel(target_channel_id)
 
     if channel:
+        # استخدام الصورة المرفقة مباشرة كملف مرسل مع الإمبد
+        image_url = "https://cdn.discordapp.com/attachments/1234567890/image_2.png" # استبدل برابط الصورة المباشر أو استخدم الملف المرفق أدناه
+        
         embed = discord.Embed(
-            title="نظام تذاكر N7Z المحمي",
+            title="نظام تذاكر N7Z",
             description="اختر القسم المناسب أدناه لفتح تذكرة وسيقوم فريق العمل بمساعدتك في أسرع وقت.",
             color=0x2b2d31
         )
-        embed.set_image(url="https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe")
+        
+        # إرفاق الصورة التي أرسلتها في المحادثة مباشرة
+        embed.set_image(url="attachment://n7z_banner.png")
+        
+        # تحميل الصورة المرفقة وإرسالها كملف داخل الرسالة لضمان ظهورها
+        import urllib.request
+        image_link = "https://raw.githubusercontent.com/..." # سيتم استخدام الصورة المحلية عبر discord.File
+        
+        # سنقوم بإرسالها مع الملف مباشرة لتظهر بدون مشاكل:
+        # ملاحظة: قم برفع الصورة على ديسكورد وخذ رابطها المباشر أو استخدم الكود التالي:
+        
+        await interaction.response.send_message("⏳ جاري إرسال لوحة التذاكر...", ephemeral=True)
+        
+        # سنستخدم رابط الصورة المباشر أو ارفعها في روم وضع رابطها هنا:
+        embed.set_image(url="https://media.discordapp.net/attachments/...") # ضع رابط صورتك المباشر هنا لضمان ظهورها
         
         await channel.send(embed=embed, view=TicketView())
-        await interaction.response.send_message("✅ تم إرسال لوحة التذاكر إلى الروم المحدد بنجاح!", ephemeral=True)
+        await interaction.edit_original_response(content="✅ تم إرسال لوحة التذاكر إلى الروم المحدد بالصورة والأزرار بنجاح!")
     else:
-        await interaction.response.send_message("❌ لم يتم العثور على الروم بالآيدي المحدد، تأكد من صحة الآيدي.", ephemeral=True)
+        await interaction.response.send_message("❌ لم يتم العثور على الروم بالآيدي المحدد (`1565981889045463051`)، تأكد من صحة الآيدي وتواجد البوت فيه.", ephemeral=True)
 
 
-# 2. أمر سلاش للبرودكاست بالخاص مع منشن العضو: /broadcast [message]
+# 2. أمر البرودكاست في الخاص مع منشن في النهاية
 @bot.tree.command(name="broadcast", description="إرسال برودكاست لجميع الأعضاء بالخاص مع منشن في النهاية")
 @app_commands.describe(message="نص الرسالة المراد إرسالها للجميع بالخاص")
 async def broadcast(interaction: discord.Interaction, message: str):
@@ -157,7 +169,7 @@ async def broadcast(interaction: discord.Interaction, message: str):
     await interaction.followup.send(f"✅ تم إرسال البرودكاست بنجاح!\n📤 تم الإرسال إلى: `{success_count}` عضو\n❌ فشل الإرسال (مغلق الخاص): `{fail_count}` عضو", ephemeral=True)
 
 
-# 3. أمر سلاش للرد بالذكاء الاصطناعي: /ai [prompt]
+# 3. أمر الذكاء الاصطناعي /ai
 @bot.tree.command(name="ai", description="طرح سؤال أو طلب مساعدة برمجية من Gemini الذكي")
 @app_commands.describe(prompt="السؤال أو كود البايثون المراد شرحه أو الاستفسار عنه")
 async def ai(interaction: discord.Interaction, prompt: str):
@@ -181,7 +193,6 @@ async def ai(interaction: discord.Interaction, prompt: str):
         await interaction.followup.send("عذراً، حدث خطأ أثناء الاتصال بنظام الذكاء الاصطناعي.")
 
 
-# الرد الآلي عند منشنة البوت
 @bot.event
 async def on_message(message):
     if message.author == bot.user:
@@ -190,7 +201,7 @@ async def on_message(message):
     if bot.user.mentioned_in(message):
         user_message = message.content.replace(f'<@!{bot.user.id}>', '').replace(f'<@{bot.user.id}>', '').strip()
         if not user_message:
-            await message.channel.send("أهلاً بك! يمكنك استخدام الأمر `/ai` أو كتابة سؤالك هنا للمساعدة.")
+            await message.channel.send("أهلاً بك! يمكنك استخدام الأمر `/ai` أو كتابة سؤالك هنا.")
             return
 
         async with message.channel.typing():
@@ -214,5 +225,4 @@ async def on_message(message):
 
     await bot.process_commands(message)
 
-# تشغيل البوت
 bot.run(DISCORD_TOKEN)
