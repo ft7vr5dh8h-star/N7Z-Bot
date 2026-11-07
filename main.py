@@ -43,7 +43,7 @@ SUPPORT_ROLE_IDS = [
     1563683211266228374
 ]
 
-# آيدي روم السجلات الذي طلبته
+# آيدي روم السجلات
 LOGS_CHANNEL_ID = 1568491490265661440
 
 # قائمة خيارات الإدارة داخل التذكرة
@@ -60,7 +60,7 @@ class TicketManagementSelect(discord.ui.Select):
     async def callback(self, interaction: discord.Interaction):
         val = self.values[0]
         if val == "close":
-            await interaction.response.send_message("🔒 جاري إغلاق التذكرة وتصدير السجلات...", ephemeral=True)
+            await interaction.response.send_message("🔒 جاري إغلاق وتصدير السجلات وحذف التذكرة...", ephemeral=True)
             
             # جلب روم السجلات
             logs_channel = interaction.guild.get_channel(LOGS_CHANNEL_ID)
@@ -73,8 +73,8 @@ class TicketManagementSelect(discord.ui.Select):
             if logs_channel:
                 await logs_channel.send(content=f"📁 **سجلات التذكرة المغلقة:** `{interaction.channel.name}`\nبواسطة المشرف: {interaction.user.mention}", file=file)
             
-            # حذف روم التذكرة بعد 3 ثوانٍ
-            await interaction.channel.delete(delay=3)
+            # تنفيذ أمر الحذف الفوري للروم
+            await interaction.channel.delete(reason=f"Closed by {interaction.user}")
 
         elif val == "add_user":
             await interaction.response.send_message("👥 لاستخدام إضافة عضو، قم بمنشن العضو المطلوب داخل التذكرة.", ephemeral=True)
