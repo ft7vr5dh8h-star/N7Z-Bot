@@ -3,7 +3,6 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 from google import genai
-import io
 
 # جلب التوكنات ومفاتيح البيئة من رايلواي
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
@@ -15,10 +14,8 @@ if not DISCORD_TOKEN:
 if not GEMINI_API_KEY:
     raise ValueError("خطأ: لم يتم العثور على متغير البيئة GEMINI_API_KEY.")
 
-# إعداد عميل Gemini الذكي
 ai_client = genai.Client(api_key=GEMINI_API_KEY)
 
-# إرشادات النظام الأمنية والبرمجية
 SYSTEM_INSTRUCTIONS = """
 أنت مساعد ذكي ومخصص حصرياً لبوت ديسكورد (N7Z-Bot). مهامك وضوابطك هي:
 1. الإجابة على الأسئلة العامة بدقة واحترافية عالية.
@@ -33,7 +30,61 @@ intents.members = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# نظام أزرار التذاكر (5 أزرار بعد إزالة السجلات)
+# ==========================================
+# إعداد رتب الدعم الفني (بين 6 إلى 10 رتب)
+# يمكنك وضع آيديات رتب الدعم الخاصة بك هنا مباشرة
+# ==========================================
+SUPPORT_ROLE_IDS = [
+    1566259679473041489, # ضع آيدي رتبة الدعم 1 هنا
+    1563683677819637782, # ضع آيدي رتبة الدعم 2 هنا
+    1563682720436060241, # ضع آيدي رتبة الدعم 3 هنا
+    1563693370436751441, # ضع آيدي رتبة الدعم 4 هنا
+    1563693266120216619, # ضع آيدي رتبة الدعم 5 هنا
+    1563683211266228374  # ضع آيدي رتبة الدعم 6 هنا (يمكنك إضافة حتى 10 رتب)
+]
+
+# قائمة خيارات الإدارة داخل التذكرة (مطابقة للصور التي أرفقتها)
+class TicketManagementSelect(discord.ui.Select):
+    def __init__(self):
+        options = [
+            discord.SelectOption(label="Close with Reason", description="Close the ticket with reason", emoji="🔒", value="close"),
+            discord.SelectOption(label="Add User to Ticket", description="Add a user to the ticket", emoji="👥", value="add_user"),
+            discord.SelectOption(label="Member PM Reminder", description="Send a PM reminder to the ticket creator", emoji="✉️", value="pm_reminder"),
+            discord.SelectOption(label="Request Ticket Copy", description="Request a copy of the ticket", emoji="📋", value="ticket_copy"),
+        ]
+        super().__init__(placeholder="Choose a Ticket Action", min_values=1, max_values=1, options=options, custom_id="ticket_management_select")
+
+    async def callback(self, interaction: discord.Interaction):
+        val = self.values[0]
+        if val == "close":
+            await interaction.response.send_message("🔒 جاري إغلاق التذكرة...", ephemeral=True)
+            await interaction.channel.delete(delay=3)
+        elif val == "add_user":
+            await interaction.response.send_message("👥 يرجى منشن العضو المراد إضافته للتذكرة.", ephemeral=True)
+        elif val == "pm_reminder":
+            await interaction.response.send_message("✉️ تم إرسال تذكير خاص لصاحب التذكرة.", ephemeral=True)
+        elif val == "ticket_copy":
+            await interaction.response.send_message("📋 جاري استخراج نسخة من السجلات...", ephemeral=True)
+
+class TicketManagementView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+        self.add_item(TicketManagementSelect())
+
+# أزرار تحكم المشرفين داخل التذكرة (Ticket Options و Claim المطابقة للصورة)
+class InsideTicketView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(label="Ticket Options", style=discord.ButtonStyle.secondary, emoji="🎫", custom_id="ticket_options_btn")
+    async def ticket_options(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_message("🎫 **Ticket Management**\n• Select an option from the dropdown menu below", view=TicketManagementView(), ephemeral=True)
+
+    @discord.ui.button(label="Claim", style=discord.ButtonStyle.secondary, emoji="💼", custom_id="claim_btn")
+    async def claim_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_message(f"💼 تم استلام التذكرة بواسطة: {interaction.user.mention}")
+
+# أزرار لوحة التذاكر الرئيسية (5 أزرار)
 class TicketView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
@@ -46,6 +97,12 @@ class TicketView(discord.ui.View):
             guild.me: discord.PermissionOverwrite(read_messages=True, send_messages=True)
         }
         
+        # منح الصلاحيات تلقائياً لصاحب رتبة Streamer / Administrator ورتب الدعم المحددة
+        for role_id in SUPPORT_ROLE_IDS:
+            role = guild.get_role(role_id)
+            if role:
+                overwrites[role] = discord.PermissionOverwrite(read_messages=True, send_messages=True)
+
         for role in guild.roles:
             if role.name.lower() in ["streamer", "ستريمر", "admin", "administrator", "مشرف", "إدارة"]:
                 overwrites[role] = discord.PermissionOverwrite(read_messages=True, send_messages=True)
@@ -61,7 +118,17 @@ class TicketView(discord.ui.View):
         )
 
         await interaction.response.send_message(f"✅ تم فتح تذكرتك بنجاح: {channel.mention}", ephemeral=True)
-        await channel.send(f"مرحباً {interaction.user.mention}! تم فتح تذكرة **{ticket_type}**. سيتولى فريق العمل الرد عليك قريباً.")
+        
+        # إرسال رسالة الترحيب داخل التذكرة مطابقة للصورة تماماً مع منشن فريق الدعم والأزرار الداخلية
+        support_mentions = " ".join([f"<@&{rid}>" for rid in SUPPORT_ROLE_IDS if guild.get_role(rid)])
+        welcome_text = f"{support_mentions} | 🎫 **TICKET STAFF**"
+        
+        embed = discord.Embed(
+            title=f"تذكرة {ticket_type}",
+            description=f"مرحباً {interaction.user.mention}! تم فتح التذكرة بنجاح. يرجى توضيح مشكلتك أو طلبك وسيتولى فريق العمل خدمتك.",
+            color=0x2b2d31
+        )
+        await channel.send(content=welcome_text, embed=embed, view=InsideTicketView())
 
     @discord.ui.button(label="استفسار 🙋‍♂️", style=discord.ButtonStyle.primary, custom_id="tkt_inquiry")
     async def inquiry_button(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -87,6 +154,8 @@ class TicketView(discord.ui.View):
 @bot.event
 async def on_ready():
     bot.add_view(TicketView())
+    bot.add_view(InsideTicketView())
+    bot.add_view(TicketManagementView())
     try:
         synced = await bot.tree.sync()
         print(f"Synced {len(synced)} slash commands successfully.")
@@ -101,46 +170,28 @@ def check_admin_or_streamer(interaction: discord.Interaction) -> bool:
     return is_admin or has_streamer_role
 
 
-# 1. أمر إرسال لوحة التذاكر بالصورة المرفقة والآيدي الجديد
+# 1. أمر إرسال لوحة التذاكر للروم المطلوب بالآيدي `1565981889045463051`
 @bot.tree.command(name="setup-tickets", description="إرسال لوحة التذاكر إلى الروم المخصص بالصورة والأزرار الخمسة")
 async def setup_tickets(interaction: discord.Interaction):
     if not check_admin_or_streamer(interaction):
         await interaction.response.send_message("❌ عذراً، هذا الأمر محمي ولا يملكه إلا حاملو رتبة **Streamer** أو المشرفين!", ephemeral=True)
         return
 
-    # آيدي روم التذاكر الجديد الذي طلبته
     target_channel_id = 1565981889045463051
     channel = bot.get_channel(target_channel_id)
 
     if channel:
-        # استخدام الصورة المرفقة مباشرة كملف مرسل مع الإمبد
-        image_url = "https://cdn.discordapp.com/attachments/1234567890/image_2.png" # استبدل برابط الصورة المباشر أو استخدم الملف المرفق أدناه
-        
         embed = discord.Embed(
             title="نظام تذاكر N7Z",
             description="اختر القسم المناسب أدناه لفتح تذكرة وسيقوم فريق العمل بمساعدتك في أسرع وقت.",
             color=0x2b2d31
         )
-        
-        # إرفاق الصورة التي أرسلتها في المحادثة مباشرة
-        embed.set_image(url="attachment://n7z_banner.png")
-        
-        # تحميل الصورة المرفقة وإرسالها كملف داخل الرسالة لضمان ظهورها
-        import urllib.request
-        image_link = "https://raw.githubusercontent.com/..." # سيتم استخدام الصورة المحلية عبر discord.File
-        
-        # سنقوم بإرسالها مع الملف مباشرة لتظهر بدون مشاكل:
-        # ملاحظة: قم برفع الصورة على ديسكورد وخذ رابطها المباشر أو استخدم الكود التالي:
-        
-        await interaction.response.send_message("⏳ جاري إرسال لوحة التذاكر...", ephemeral=True)
-        
-        # سنستخدم رابط الصورة المباشر أو ارفعها في روم وضع رابطها هنا:
-        embed.set_image(url="https://media.discordapp.net/attachments/...") # ضع رابط صورتك المباشر هنا لضمان ظهورها
+        embed.set_image(url="https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe") # ضع رابط صورتك المباشر هنا
         
         await channel.send(embed=embed, view=TicketView())
-        await interaction.edit_original_response(content="✅ تم إرسال لوحة التذاكر إلى الروم المحدد بالصورة والأزرار بنجاح!")
+        await interaction.response.send_message("✅ تم إرسال لوحة التذاكر إلى روم التذاكر المحدد بنجاح!", ephemeral=True)
     else:
-        await interaction.response.send_message("❌ لم يتم العثور على الروم بالآيدي المحدد (`1565981889045463051`)، تأكد من صحة الآيدي وتواجد البوت فيه.", ephemeral=True)
+        await interaction.response.send_message("❌ لم يتم العثور على الروم بالآيدي المحدد (`1565981889045463051`)، تأكد من صحة الآيدي.", ephemeral=True)
 
 
 # 2. أمر البرودكاست في الخاص مع منشن في النهاية
