@@ -43,7 +43,7 @@ SUPPORT_ROLE_IDS = [
     1563683211266228374
 ]
 
-# قائمة خيارات الإدارة داخل التذكرة (تعمل بشكل كامل ومباشر)
+# قائمة خيارات الإدارة داخل التذكرة (تم إصلاح أمر الإغلاق والخيارات)
 class TicketManagementSelect(discord.ui.Select):
     def __init__(self):
         options = [
@@ -57,14 +57,13 @@ class TicketManagementSelect(discord.ui.Select):
     async def callback(self, interaction: discord.Interaction):
         val = self.values[0]
         if val == "close":
-            await interaction.response.send_message("🔒 جاري إغلاق وتدمير التذكرة خلال 3 ثوانٍ...", ephemeral=True)
-            await interaction.channel.delete(delay=3)
+            await interaction.response.send_message("🔒 جاري إغلاق التذكرة...", ephemeral=True)
+            await interaction.channel.delete(delay=2)
         elif val == "add_user":
-            await interaction.response.send_message("👥 لاستخدام إضافة عضو، قم بكتابة منشن العضو داخل الروم أو استخدم صلاحيات الإدارة.", ephemeral=True)
+            await interaction.response.send_message("👥 لاستخدام إضافة عضو، قم بمنشن العضو المطلوب داخل التذكرة.", ephemeral=True)
         elif val == "pm_reminder":
             await interaction.response.send_message("✉️ تم إرسال تذكير خاص لصاحب التذكرة بنجاح.", ephemeral=True)
         elif val == "ticket_copy":
-            # توليد ملف نصي كسجل للتذكرة وإرساله
             messages = [f"{msg.author}: {msg.content}" async for msg in interaction.channel.history(limit=100)]
             transcript = "\n".join(reversed(messages))
             file = discord.File(io.BytesIO(transcript.encode('utf-8')), filename=f"transcript-{interaction.channel.name}.txt")
@@ -101,7 +100,6 @@ class TicketView(discord.ui.View):
             guild.me: discord.PermissionOverwrite(read_messages=True, send_messages=True)
         }
         
-        # منح الصلاحيات تلقائياً لرتب الدعم المحددة ورتب الإدارة
         for role_id in SUPPORT_ROLE_IDS:
             role = guild.get_role(role_id)
             if role:
@@ -173,8 +171,8 @@ def check_admin_or_streamer(interaction: discord.Interaction) -> bool:
     return is_admin or has_streamer_role
 
 
-# 1. أمر إرسال لوحة التذاكر للروم المطلوب بالآيدي `1565981889045463051` مع صورة N7Z TICKET الجديدة
-@bot.tree.command(name="setup-tickets", description="إرسال لوحة التذاكر إلى الروم المخصص بالصورة الجديدة والأزرار الخمسة")
+# 1. أمر إرسال لوحة التذاكر (بدون أي صور تماماً، نص وتصميم نقي مع الأزرار الخمسة)
+@bot.tree.command(name="setup-tickets", description="إرسال لوحة التذاكر إلى الروم المخصص بدون صورة")
 async def setup_tickets(interaction: discord.Interaction):
     if not check_admin_or_streamer(interaction):
         await interaction.response.send_message("❌ عذراً، هذا الأمر محمي ولا يملكه إلا حاملو رتبة **Streamer** أو المشرفين!", ephemeral=True)
@@ -189,11 +187,10 @@ async def setup_tickets(interaction: discord.Interaction):
             description="اختر القسم المناسب أدناه لفتح تذكرة وسيقوم فريق العمل بمساعدتك في أسرع وقت.",
             color=0x2b2d31
         )
-        # رابط الصورة الجديدة التي أرفقتها (N7Z TICKET)
-        embed.set_image(url="https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe") # ضع رابط صورتك المباشر هنا
+        # تم حذف سطر وضع الصورة نهائياً لتكون بدون صورة
         
         await channel.send(embed=embed, view=TicketView())
-        await interaction.response.send_message("✅ تم إرسال لوحة التذاكر إلى روم التذاكر المحدد بالصورة الجديدة بنجاح!", ephemeral=True)
+        await interaction.response.send_message("✅ تم إرسال لوحة التذاكر بدون صورة إلى روم التذاكر المحدد بنجاح!", ephemeral=True)
     else:
         await interaction.response.send_message("❌ لم يتم العثور على الروم بالآيدي المحدد (`1565981889045463051`)، تأكد من صحة الآيدي.", ephemeral=True)
 
