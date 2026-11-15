@@ -555,3 +555,4 @@ URL_RE = re.compile(
     r"(?:(?:https?://)|(?:www\.))"
     r"[^\s<>\]\)\"']+"
     r"|(?:[a-zA-Z0-9-]+\.)+(?:com|net|org|io|gg|co|me|tv|xyz|app|dev|info|biz|online|site|shop|pro|ai|ph|sa|ae|uk|us|ly|to|cc|ru|de|fr|es|it|c
+    
