@@ -1,268 +1,108 @@
+# -*- coding: utf-8 -*-
+"""
+بوت N7Z — نظام التذاكر + حماية السيرفر
+=======================================
+هذا ملف واحد يجمع كل كود البوت، حتى يسهل قراءته وتشغيله.
+
+ماذا يفعل البوت؟
+  1) نظام التذاكر: لوحة أزرار لفتح تذكرة، وإدارتها، وتصدير سجلها.
+  2) أمر /broadcast: إرسال رسالة لجميع الأعضاء في الخاص.
+  3) حماية السيرفر:
+       - مكافحة الروابط ودعوات ديسكورد
+       - مكافحة الإزعاج (رسائل سريعة / مكررة / منشن جماعي)
+       - مكافحة الغارات (انضمام جماعي ثم إغلاق السيرفر)
+       - مكافحة التخريب Anti-Nuke عبر سجل التدقيق، مع محاولة الاستعادة
+
+كيف تشغّله؟
+  1) ثبّت المكتبات:   pip install -r requirements.txt
+  2) ضع توكن البوت في متغير البيئة DISCORD_TOKEN
+     أو أنشئ ملف .env بجانب هذا الملف وفيه: DISCORD_TOKEN=التوكن
+  3) شغّل الملف:       python bot.py
+
+ملاحظات سريعة للمبتدئ:
+  - أوامر السلاش تظهر بعد مزامنتها عند التشغيل (انظر on_ready).
+  - الإعدادات تُحفظ تلقائيًا في ملف config.json بجانب هذا الملف.
+  - لا تضع التوكن داخل الكود أبدًا.
+  - رتبة البوت يجب أن تكون أعلى من الرتب التي يراد محاسبتها.
+"""
+
+from __future__ import annotations
+
+# ---------------------------------------------------------------------------
+# المكتبات المستخدمة
+# ---------------------------------------------------------------------------
+# os / Path : قراءة التوكن ومسار الملفات
+# json      : حفظ الإعدادات في config.json
+# discord   : مكتبة ديسكورد الرسمية لبايثون (discord.py 2.x)
+# app_commands : أوامر السلاش (التي تظهر عند كتابة / )
+# commands.Cog : نقسم الحماية إلى "كلاسات" منظمة داخل نفس الملف
+# ---------------------------------------------------------------------------
+import asyncio
+import io
+import json
+import logging
 import os
+import re
+import threading
+import time
+from collections import defaultdict, deque
+from copy import deepcopy
+from dataclasses import dataclass, field
+from datetime import timedelta
+from pathlib import Path
+from typing import Any, Literal
+from urllib.parse import urlparse
+
 import discord
 from discord import app_commands
 from discord.ext import commands
-import io
-from pathlib import Path
 
+# نحاول تحميل ملف .env إن وُجد (مفيد على جهازك). في Railway يكفي متغير البيئة.
 try:
     from dotenv import load_dotenv
+
     load_dotenv(Path(__file__).resolve().parent / ".env")
 except ImportError:
+    # المكتبة غير مثبتة؟ لا بأس، سنقرأ التوكن من نظام التشغيل مباشرة.
     pass
 
-from protectbot.config import Config
+# مسجّل الأحداث في الطرفية (تحذيرات الصلاحيات مثلًا)
+log = logging.getLogger("n7z")
+if not log.handlers:
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 
-# جلب التوكن من متغيرات البيئة في رايلواي (أو من ملف .env محليًا)
+
+# =============================================================================
+# القسم 1: التوكن وصلاحيات البوت (Intents)
+# -----------------------------------------------------------------------------
+# التوكن هو "مفتاح" البوت. نقرأه من الخارج حتى لا يُسرق إن شاركت الملف.
+# الـ Intents تخبر ديسكورد أي أحداث نحتاجها:
+#   message_content : قراءة نص الرسائل (للكشف عن الروابط والإزعاج)
+#   members         : معرفة الأعضاء والانضمام (للغارات والبرودكاست)
+#   guilds          : بيانات السيرفر والقنوات
+# =============================================================================
+
+# التوكن من متغير البيئة، أو من ملف .env إن وُجد. لا نكتب التوكن هنا.
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 
+# صلاحيات البوت على البوابة (Gateway). يجب تفعيل Members و Message Content
+# أيضًا من صفحة البوت في Discord Developer Portal.
 intents = discord.Intents.default()
 intents.message_content = True
 intents.guilds = True
 intents.members = True
 
-PROTECT_EXTENSIONS = [
-    "protectbot.cogs.antilink",
-    "protectbot.cogs.antispam",
-    "protectbot.cogs.antiraid",
-    "protectbot.cogs.antinuke",
-    "protectbot.cogs.admin",
-]
+# مسار ملف الإعدادات بجانب bot.py (يُنشأ تلقائيًا عند أول تشغيل)
+CONFIG_PATH = Path(__file__).resolve().parent / "config.json"
 
 
-class N7ZBot(commands.Bot):
-    async def setup_hook(self) -> None:
-        # تحميل وحدات الحماية قبل جاهزية البوت حتى تُزامَن أوامر السلاش معها
-        for ext in PROTECT_EXTENSIONS:
-            await self.load_extension(ext)
-
-
-bot = N7ZBot(command_prefix="!", intents=intents)
-bot.config = Config(Path(__file__).resolve().parent / "config.json")
-
-# ==========================================
-# رتب الدعم الفني (بين 6 إلى 10 رتب)
-# ==========================================
-SUPPORT_ROLE_IDS = [
-    1566259679473041489,
-    1563683677819637782,
-    1563682720436060241,
-    1563693370436751441,
-    1563693266120216619,
-    1563683211266228374
-]
-
-# آيدي روم السجلات
-LOGS_CHANNEL_ID = 1568491490265661440
-
-# قائمة خيارات الإدارة داخل التذكرة
-class TicketManagementSelect(discord.ui.Select):
-    def __init__(self):
-        options = [
-            discord.SelectOption(label="Close with Reason", description="Close the ticket with reason", emoji="🔒", value="close"),
-            discord.SelectOption(label="Add User to Ticket", description="Add a user to the ticket", emoji="👥", value="add_user"),
-            discord.SelectOption(label="Member PM Reminder", description="Send a PM reminder to the ticket creator", emoji="✉️", value="pm_reminder"),
-            discord.SelectOption(label="Request Ticket Copy", description="Request a copy of the ticket", emoji="📋", value="ticket_copy"),
-        ]
-        super().__init__(placeholder="Choose a Ticket Action", min_values=1, max_values=1, options=options, custom_id="ticket_management_select")
-
-    async def callback(self, interaction: discord.Interaction):
-        val = self.values[0]
-        if val == "close":
-            await interaction.response.send_message("🔒 جاري إغلاق وتصدير السجلات وحذف التذكرة...", ephemeral=True)
-            
-            # جلب روم السجلات
-            logs_channel = interaction.guild.get_channel(LOGS_CHANNEL_ID)
-            
-            # جمع رسائل التذكرة وتصديرها كملف
-            messages = [f"[{msg.created_at.strftime('%Y-%m-%d %H:%M:%S')}] {msg.author}: {msg.content}" async for msg in interaction.channel.history(limit=500)]
-            transcript_text = f"--- سجلات تذكرة: {interaction.channel.name} ---\nأغلق بواسطة: {interaction.user}\n\n" + "\n".join(reversed(messages))
-            file = discord.File(io.BytesIO(transcript_text.encode('utf-8')), filename=f"transcript-{interaction.channel.name}.txt")
-            
-            if logs_channel:
-                await logs_channel.send(content=f"📁 **سجلات التذكرة المغلقة:** `{interaction.channel.name}`\nبواسطة المشرف: {interaction.user.mention}", file=file)
-            
-            # تنفيذ أمر الحذف الفوري للروم
-            await interaction.channel.delete(reason=f"Closed by {interaction.user}")
-
-        elif val == "add_user":
-            await interaction.response.send_message("👥 لاستخدام إضافة عضو، قم بمنشن العضو المطلوب داخل التذكرة.", ephemeral=True)
-        elif val == "pm_reminder":
-            await interaction.response.send_message("✉️ تم إرسال تذكير خاص لصاحب التذكرة بنجاح.", ephemeral=True)
-        elif val == "ticket_copy":
-            messages = [f"{msg.author}: {msg.content}" async for msg in interaction.channel.history(limit=100)]
-            transcript = "\n".join(reversed(messages))
-            file = discord.File(io.BytesIO(transcript.encode('utf-8')), filename=f"transcript-{interaction.channel.name}.txt")
-            await interaction.response.send_message("📋 تفضل نسخة من سجلات هذه التذكرة:", file=file, ephemeral=True)
-
-class TicketManagementView(discord.ui.View):
-    def __init__(self):
-        super().__init__(timeout=None)
-        self.add_item(TicketManagementSelect())
-
-# أزرار تحكم المشرفين داخل التذكرة (Ticket Options و Claim)
-class InsideTicketView(discord.ui.View):
-    def __init__(self):
-        super().__init__(timeout=None)
-
-    @discord.ui.button(label="Ticket Options", style=discord.ButtonStyle.secondary, emoji="🎫", custom_id="ticket_options_btn")
-    async def ticket_options(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_message("🎫 **Ticket Management**\n• Select an option from the dropdown menu below", view=TicketManagementView(), ephemeral=True)
-
-    @discord.ui.button(label="Claim", style=discord.ButtonStyle.secondary, emoji="💼", custom_id="claim_btn")
-    async def claim_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_message(f"💼 تم استلام التذكرة بواسطة المشرف: {interaction.user.mention}")
-
-# أزرار لوحة التذاكر الرئيسية (5 أزرار)
-class TicketView(discord.ui.View):
-    def __init__(self):
-        super().__init__(timeout=None)
-
-    async def create_ticket(self, interaction: discord.Interaction, ticket_type: str):
-        guild = interaction.guild
-        overwrites = {
-            guild.default_role: discord.PermissionOverwrite(read_messages=False),
-            interaction.user: discord.PermissionOverwrite(read_messages=True, send_messages=True),
-            guild.me: discord.PermissionOverwrite(read_messages=True, send_messages=True)
-        }
-        
-        for role_id in SUPPORT_ROLE_IDS:
-            role = guild.get_role(role_id)
-            if role:
-                overwrites[role] = discord.PermissionOverwrite(read_messages=True, send_messages=True)
-
-        for role in guild.roles:
-            if role.name.lower() in ["streamer", "ستريمر", "admin", "administrator", "مشرف", "إدارة"]:
-                overwrites[role] = discord.PermissionOverwrite(read_messages=True, send_messages=True)
-
-        category = discord.utils.get(guild.categories, name="التذاكر")
-        if not category:
-            category = await guild.create_category("التذاكر")
-
-        channel = await guild.create_text_channel(
-            name=f"tkt-{ticket_type}-{interaction.user.name}",
-            category=category,
-            overwrites=overwrites
-        )
-
-        await interaction.response.send_message(f"✅ تم فتح تذكرتك بنجاح: {channel.mention}", ephemeral=True)
-        
-        support_mentions = " ".join([f"<@&{rid}>" for rid in SUPPORT_ROLE_IDS if guild.get_role(rid)])
-        welcome_text = f"{support_mentions} | 🎫 **TICKET STAFF**"
-        
-        embed = discord.Embed(
-            title=f"تذكرة {ticket_type}",
-            description=f"مرحباً {interaction.user.mention}! تم فتح التذكرة بنجاح. يرجى توضيح مشكلتك أو طلبك وسيتولى فريق العمل خدمتك.",
-            color=0x2b2d31
-        )
-        await channel.send(content=welcome_text, embed=embed, view=InsideTicketView())
-
-    @discord.ui.button(label="استفسار 🙋‍♂️", style=discord.ButtonStyle.primary, custom_id="tkt_inquiry")
-    async def inquiry_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self.create_ticket(interaction, "استفسار")
-
-    @discord.ui.button(label="شراء 🛒", style=discord.ButtonStyle.secondary, custom_id="tkt_buy")
-    async def buy_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self.create_ticket(interaction, "شراء")
-
-    @discord.ui.button(label="توثيق بنات ✔️", style=discord.ButtonStyle.success, custom_id="tkt_verify")
-    async def verify_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self.create_ticket(interaction, "توثيق-بنات")
-
-    @discord.ui.button(label="طلب اونر 👑", style=discord.ButtonStyle.primary, custom_id="tkt_owner")
-    async def owner_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self.create_ticket(interaction, "طلب-اونر")
-
-    @discord.ui.button(label="شراكه 🤝", style=discord.ButtonStyle.blurple, custom_id="tkt_partnership")
-    async def partnership_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self.create_ticket(interaction, "شراكه")
-
-
-@bot.event
-async def on_ready():
-    # تسجيل الViews لكي تعمل الأزرار والقوائم دائماً بشكل دائم
-    bot.add_view(TicketView())
-    bot.add_view(InsideTicketView())
-    bot.add_view(TicketManagementView())
-    
-    try:
-        guild_id = os.getenv("DISCORD_GUILD_ID")
-        if guild_id:
-            synced = await bot.tree.sync(guild=discord.Object(id=int(guild_id)))
-        else:
-            synced = await bot.tree.sync()
-        print(f"Synced {len(synced)} slash commands successfully.")
-    except Exception as e:
-        print(f"Failed to sync slash commands: {e}")
-    print(f'Logged in as {bot.user} successfully, N7Z-Bot is online!')
-
-
-def check_admin_or_streamer(interaction: discord.Interaction) -> bool:
-    is_admin = interaction.user.guild_permissions.administrator
-    has_streamer_role = any(role.name.lower() in ["streamer", "ستريمر"] for role in interaction.user.roles)
-    return is_admin or has_streamer_role
-
-
-# 1. أمر إرسال لوحة التذاكر (بدون صورة)
-@bot.tree.command(name="setup-tickets", description="إرسال لوحة التذاكر إلى الروم المخصص بدون صورة")
-async def setup_tickets(interaction: discord.Interaction):
-    if not check_admin_or_streamer(interaction):
-        await interaction.response.send_message("❌ عذراً، هذا الأمر محمي ولا يملكه إلا حاملو رتبة **Streamer** أو المشرفين!", ephemeral=True)
-        return
-
-    target_channel_id = 1565981889045463051
-    channel = bot.get_channel(target_channel_id)
-
-    if channel:
-        embed = discord.Embed(
-            title="نظام تذاكر N7Z",
-            description="اختر القسم المناسب أدناه لفتح تذكرة وسيقوم فريق العمل بمساعدتك في أسرع وقت.",
-            color=0x2b2d31
-        )
-        await channel.send(embed=embed, view=TicketView())
-        await interaction.response.send_message("✅ تم إرسال لوحة التذاكر بدون صورة إلى روم التذاكر المحدد بنجاح!", ephemeral=True)
-    else:
-        await interaction.response.send_message("❌ لم يتم العثور على الروم بالآيدي المحدد (`1565981889045463051`)، تأكد من صحة الآيدي.", ephemeral=True)
-
-
-# 2. أمر البرودكاست في الخاص مع منشن في النهاية
-@bot.tree.command(name="broadcast", description="إرسال برودكاست لجميع الأعضاء بالخاص مع منشن في النهاية")
-@app_commands.describe(message="نص الرسالة المراد إرسالها للجميع بالخاص")
-async def broadcast(interaction: discord.Interaction, message: str):
-    if not check_admin_or_streamer(interaction):
-        await interaction.response.send_message("❌ عذراً، أمر البرودكاست مخصص فقط لحاملي رتبة **Streamer** أو الإدارة!", ephemeral=True)
-        return
-
-    await interaction.response.send_message("⏳ جاري إرسال البرودكاست لجميع أعضاء السيرفر بالخاص...", ephemeral=True)
-
-    success_count = 0
-    fail_count = 0
-
-    for member in interaction.guild.members:
-        if member.bot:
-            continue
-        try:
-            dm_text = f"{message}\n\n{member.mention}"
-            await member.send(dm_text)
-            success_count += 1
-        except Exception:
-            fail_count += 1
-
-    await interaction.followup.send(f"✅ تم إرسال البرودكاست بنجاح!\n📤 تم الإرسال إلى: `{success_count}` عضو\n❌ فشل الإرسال (مغلق الخاص): `{fail_count}` عضو", ephemeral=True)
-
-if __name__ == "__main__":
-    if not DISCORD_TOKEN:
-        raise ValueError("خطأ: لم يتم العثور على متغير البيئة DISCORD_TOKEN.")
-    bot.run(DISCORD_TOKEN)
-"""تحميل إعدادات السيرفر وحفظها في ملف JSON."""
-
-from __future__ import annotations
-
-import json
-import threading
-from copy import deepcopy
-from pathlib import Path
-from typing import Any
+# =============================================================================
+# القسم 2: الإعدادات الافتراضية وحفظها في config.json
+# -----------------------------------------------------------------------------
+# كل سيرفر له إعداداته: تشغيل/إيقاف الحماية، القائمة البيضاء، الحدود، قناة السجلات.
+# عند أي تعديل عبر الأوامر (مثل /whitelist أو /protection) يُحفظ الملف تلقائيًا.
+# يمكنك لاحقًا تعديل الأرقام أيضًا يدويًا في config.json أو عبر أمر /setprotect.
+# =============================================================================
 
 DEFAULT_ALLOWED_DOMAINS = [
     "youtube.com",
@@ -396,20 +236,16 @@ class Config:
     def set_protection(self, guild_id: int, name: str, enabled: bool) -> None:
         self.guild(guild_id)["protections"][name] = bool(enabled)
         self.save()
-"""دوال مساعدة: القائمة البيضاء، السجلات، المهلة الزمنية، والصلاحيات."""
 
-from __future__ import annotations
 
-import logging
-from datetime import timedelta
-from typing import TYPE_CHECKING
-
-import discord
-
-if TYPE_CHECKING:
-    from protectbot.config import Config
-
-log = logging.getLogger("protectbot")
+# =============================================================================
+# القسم 3: دوال مساعدة مشتركة
+# -----------------------------------------------------------------------------
+# هذه الدوال تُستخدم في أكثر من قسم:
+#   - معرفة إن كان العضو مستثنى (المالك / البوت / القائمة البيضاء)
+#   - إعطاء مهلة زمنية (Timeout)، نزع الرتب، الحظر أو الطرد
+#   - إرسال سجل جميل (Embed) إلى قناة سجلات الحماية
+# =============================================================================
 
 DANGEROUS_PERMISSIONS = (
     "administrator",
@@ -552,21 +388,14 @@ async def notify_user(user: discord.abc.User, message: str) -> None:
         await user.send(message)
     except (discord.Forbidden, discord.HTTPException):
         return
-"""تفعيل وضع الإغلاق وإلغاؤه: رفع التحقق وقفل القنوات."""
 
-from __future__ import annotations
 
-import logging
-from typing import TYPE_CHECKING, Any
-
-import discord
-
-from protectbot.utils import send_log
-
-if TYPE_CHECKING:
-    from protectbot.config import Config
-
-log = logging.getLogger("protectbot")
+# =============================================================================
+# القسم 4: وضع الإغلاق (Lockdown)
+# -----------------------------------------------------------------------------
+# عند اكتشاف غارة — أو عند استخدام أمر /lockdown on — نرفع مستوى التحقق
+# ونقفل الكتابة/الاتصال في القنوات. الإعدادات السابقة تُحفظ حتى /lockdown off.
+# =============================================================================
 
 # القيم التي نقيّدها أثناء الإغلاق
 LOCK_PERMS = (
@@ -701,3 +530,28 @@ async def disable_lockdown(
         color=discord.Color.green(),
     )
     return True
+
+
+# =============================================================================
+# القسم 5: مكافحة الروابط ودعوات ديسكورد
+# -----------------------------------------------------------------------------
+# إذا أرسل عضو غير مستثنى رابطًا أو دعوة سيرفر، تُحذف الرسالة.
+# يُعطى تحذيران ثم مهلة زمنية. النطاقات المسموحة تُدار بأمر /allowdomain.
+# نراقب أيضًا تعديل الرسالة حتى لا يُلتف على الفلتر بعد الإرسال.
+# =============================================================================
+
+# أحرف خفية تُستخدم أحيانًا للالتفاف على الفلتر
+_ZW = re.compile(r"[\u200b\u200c\u200d\u2060\ufeff]")
+
+INVITE_RE = re.compile(
+    r"(?:https?://)?(?:www\.)?"
+    r"(?:discord(?:app)?\.com/invite|discord\.gg|discord\.com/invite|discord\.me)/"
+    r"[a-zA-Z0-9\-]+",
+    re.IGNORECASE,
+)
+
+# روابط http/https وwww، أو نطاق ظاهر متبوع بمسار اختياري
+URL_RE = re.compile(
+    r"(?:(?:https?://)|(?:www\.))"
+    r"[^\s<>\]\)\"']+"
+    r"|(?:[a-zA-Z0-9-]+\.)+(?:com|net|org|io|gg|co|me|tv|xyz|app|dev|info|biz|online|site|shop|pro|ai|ph|sa|ae|uk|us|ly|to|cc|ru|de|fr|es|it|c
