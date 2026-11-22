@@ -1,4 +1,5 @@
 import os
+import re
 import discord
 from discord import app_commands
 from discord.ext import commands
@@ -17,8 +18,11 @@ intents.members = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# أيدي السيرفر الجديد الخاص بك للمزامنة الفورية
+# أيدي السيرفر الخاص بك للمزامنة الفورية
 GUILD_ID = discord.Object(id=1563678057863057559)
+
+# الرتبة التي طلبت التركيز عليها
+TARGET_ROLE_ID = 1563686143374004314
 
 # ==========================================
 # رتب الدعم الفني (بين 6 إلى 10 رتب)
@@ -34,6 +38,12 @@ SUPPORT_ROLE_IDS = [
 
 # آيدي روم السجلات
 LOGS_CHANNEL_ID = 1568491490265661440
+
+# تعبير نمطي لالتقاط جميع أنواع الروابط والدعوات
+URL_PATTERN = re.compile(
+    r"(https?://\S+|www\.\S+|discord\.gg/\S+|discordapp\.com/invite/\S+|discord\.com/invite/\S+)",
+    re.IGNORECASE
+)
 
 # قائمة خيارات الإدارة داخل التذكرة
 class TicketManagementSelect(discord.ui.Select):
@@ -108,6 +118,10 @@ class TicketView(discord.ui.View):
             if role:
                 overwrites[role] = discord.PermissionOverwrite(read_messages=True, send_messages=True)
 
+        target_role = guild.get_role(TARGET_ROLE_ID)
+        if target_role:
+            overwrites[target_role] = discord.PermissionOverwrite(read_messages=True, send_messages=True)
+
         for role in guild.roles:
             if role.name.lower() in ["streamer", "ستريمر", "admin", "administrator", "مشرف", "إدارة"]:
                 overwrites[role] = discord.PermissionOverwrite(read_messages=True, send_messages=True)
@@ -156,37 +170,58 @@ class TicketView(discord.ui.View):
 
 
 # ==========================================
-# نظام الحماية الصارم (Anti-Exploit & Anti-Spam)
+# نظام الحماية الصارم (Anti-Link & Anti-Exploit)
 # ==========================================
+def has_target_role(member: discord.abc.User) -> bool:
+    if not isinstance(member, discord.Member):
+        return False
+    return any(role.id == TARGET_ROLE_ID for role in member.roles)
+
 @bot.event
 async def on_message(message):
     if message.author.bot:
         return
 
-    # استثناء المشرفين والأدمن من فلتر الروابط
-    if message.author.guild_permissions.administrator:
+    # استثناء الأدمن أو أصحاب الرتبة المحددة من حذف الروابط
+    is_admin = isinstance(message.author, discord.Member) and message.author.guild_permissions.administrator
+    if is_admin or has_target_role(message.author):
         await bot.process_commands(message)
         return
 
-    # منع الروابط وإعلانات السيرفرات الأخرى
-    if "http://" in message.content or "https://" in message.content or "discord.gg/" in message.content:
+    # حذف فوري لأي رابط في الرسالة
+    if URL_PATTERN.search(message.content):
         try:
             await message.delete()
-            warning_msg = await message.channel.send(f"⚠️ {message.author.mention}, ممنوع إرسال الروابط أو الدعوات هنا!")
-            await warning_msg.delete(delay=5)
+            warning_msg = await message.channel.send(
+                f"🚫 {message.author.mention} تم حذف رسالتك فوراً! يُمنع منعاً باتاً إرسال أي روابط هنا."
+            )
+            await warning_msg.delete(delay=4)
+
+            logs_channel = message.guild.get_channel(LOGS_CHANNEL_ID) if message.guild else None
+            if logs_channel:
+                await logs_channel.send(
+                    f"🛡️ **حذف رابط تلقائي:**\n"
+                    f"• **العضو:** {message.author.mention} (`{message.author.id}`)\n"
+                    f"• **الروم:** {message.channel.mention}\n"
+                    f"• **المحتوى المحذوف:** `{message.content[:500]}`"
+                )
         except Exception as e:
-            print(f"Error handling link deletion: {e}")
+            print(f"Error deleting link message: {e}")
         return
 
     await bot.process_commands(message)
 
 @bot.event
 async def on_guild_channel_delete(channel):
-    print(f"⚠️ تنبيه أمني خطير: تم حذف قناة {channel.name}")
+    logs_channel = channel.guild.get_channel(LOGS_CHANNEL_ID)
+    if logs_channel:
+        await logs_channel.send(f"⚠️ **تنبيه أمني:** تم حذف قناة `{channel.name}` (`{channel.id}`).")
 
 @bot.event
 async def on_guild_role_delete(role):
-    print(f"⚠️ تنبيه أمني خطير: تم حذف رتبة {role.name}")
+    logs_channel = role.guild.get_channel(LOGS_CHANNEL_ID)
+    if logs_channel:
+        await logs_channel.send(f"⚠️ **تنبيه أمني:** تم حذف رتبة `{role.name}` (`{role.id}`).")
 
 
 @bot.event
@@ -201,20 +236,21 @@ async def on_ready():
         print(f"Synced {len(synced)} slash commands successfully to guild {GUILD_ID.id}.")
     except Exception as e:
         print(f"Failed to sync slash commands: {e}")
-    print(f'Logged in as {bot.user} successfully, N7Z-Bot is online with Strict Security & Tickets!')
+    print(f'Logged in as {bot.user} successfully, N7Z-Bot is online with Strict Link Protection!')
 
 
 def check_admin_or_streamer(interaction: discord.Interaction) -> bool:
     is_admin = interaction.user.guild_permissions.administrator
     has_streamer_role = any(role.name.lower() in ["streamer", "ستريمر"] for role in interaction.user.roles)
-    return is_admin or has_streamer_role
+    has_focused_role = has_target_role(interaction.user)
+    return is_admin or has_streamer_role or has_focused_role
 
 
 # 1. أمر إرسال لوحة التذاكر
 @bot.tree.command(name="setup-tickets", description="إرسال لوحة التذاكر إلى الروم المخصص")
 async def setup_tickets(interaction: discord.Interaction):
     if not check_admin_or_streamer(interaction):
-        await interaction.response.send_message("❌ عذراً، هذا الأمر محمي ولا يملكه إلا حاملو رتبة **Streamer** أو المشرفين!", ephemeral=True)
+        await interaction.response.send_message("❌ عذراً، هذا الأمر محمي ولا يملكه إلا حاملو رتبة **Streamer** أو الرتبة المعتمدة أو المشرفين!", ephemeral=True)
         return
 
     target_channel_id = 1565981889045463051
@@ -237,7 +273,7 @@ async def setup_tickets(interaction: discord.Interaction):
 @app_commands.describe(message="نص الرسالة المراد إرسالها للجميع بالخاص")
 async def broadcast(interaction: discord.Interaction, message: str):
     if not check_admin_or_streamer(interaction):
-        await interaction.response.send_message("❌ عذراً، أمر البرودكاست مخصص فقط لحاملي رتبة **Streamer** أو الإدارة!", ephemeral=True)
+        await interaction.response.send_message("❌ عذراً، أمر البرودكاست مخصص فقط لحاملي رتبة **Streamer** أو الرتبة المعتمدة أو الإدارة!", ephemeral=True)
         return
 
     await interaction.response.send_message("⏳ جاري إرسال البرودكاست لجميع أعضاء السيرفر بالخاص...", ephemeral=True)
