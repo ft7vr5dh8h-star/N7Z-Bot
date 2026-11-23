@@ -22,7 +22,7 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 GUILD_ID = discord.Object(id=1563678057863057559)
 
 # الرتبة التي طلبت التركيز عليها
-TARGET_ROLE_ID = 1563686143374004314
+TARGET_ROLE_ID = 
 
 # ==========================================
 # رتب الدعم الفني (بين 6 إلى 10 رتب)
