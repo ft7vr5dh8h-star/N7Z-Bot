@@ -1,4 +1,5 @@
 import os
+import re
 import discord
 from discord import app_commands
 from discord.ext import commands
@@ -17,7 +18,7 @@ intents.members = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# أيدي السيرفر الجديد الخاص بك للمزامنة الفورية
+# أيدي السيرفر الخاص بك للمزامنة الفورية
 GUILD_ID = discord.Object(id=1563678057863057559)
 
 # ==========================================
@@ -34,6 +35,51 @@ SUPPORT_ROLE_IDS = [
 
 # آيدي روم السجلات
 LOGS_CHANNEL_ID = 1568491490265661440
+
+
+async def get_and_increment_ticket_number(guild: discord.Guild) -> int:
+    """يحفظ العداد التصاعدي للتذاكر في وصف روم السجلات لضمان استمراره حتى بعد حذف التذاكر أو إعادة التشغيل"""
+    max_num = 0
+    logs_channel = guild.get_channel(LOGS_CHANNEL_ID)
+
+    # 1. قراءة آخر رقم محفوظ في وصف روم السجلات
+    if logs_channel and logs_channel.topic:
+        topic_match = re.search(r"TICKET_COUNTER:(\d+)", logs_channel.topic)
+        if topic_match:
+            max_num = max(max_num, int(topic_match.group(1)))
+
+    # 2. فحص الرومات المفتوحة حالياً كاحتياط
+    for channel in guild.text_channels:
+        match = re.search(r"-(\d+)$", channel.name)
+        if match:
+            max_num = max(max_num, int(match.group(1)))
+
+    # 3. فحص آخر رسائل السجلات في حال تم تعديل الوصف يدوياً
+    if logs_channel and max_num == 0:
+        try:
+            async for msg in logs_channel.history(limit=30):
+                msg_match = re.search(r"tkt-[^\s`]+-(\d+)", msg.content)
+                if msg_match:
+                    max_num = max(max_num, int(msg_match.group(1)))
+        except Exception:
+            pass
+
+    next_num = max_num + 1
+
+    # حفظ الرقم الجديد في وصف روم السجلات ليبقى محفوظاً في ديسكورد للأبد
+    if logs_channel:
+        try:
+            current_topic = logs_channel.topic or ""
+            if "TICKET_COUNTER:" in current_topic:
+                new_topic = re.sub(r"TICKET_COUNTER:\d+", f"TICKET_COUNTER:{next_num}", current_topic)
+            else:
+                new_topic = f"{current_topic} | TICKET_COUNTER:{next_num}".strip(" |")
+            await logs_channel.edit(topic=new_topic)
+        except Exception as e:
+            print(f"Could not update logs channel topic counter: {e}")
+
+    return next_num
+
 
 # قائمة خيارات الإدارة داخل التذكرة
 class TicketManagementSelect(discord.ui.Select):
@@ -72,10 +118,12 @@ class TicketManagementSelect(discord.ui.Select):
             file = discord.File(io.BytesIO(transcript.encode('utf-8')), filename=f"transcript-{interaction.channel.name}.txt")
             await interaction.response.send_message("📋 تفضل نسخة من سجلات هذه التذكرة:", file=file, ephemeral=True)
 
+
 class TicketManagementView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
         self.add_item(TicketManagementSelect())
+
 
 # أزرار تحكم المشرفين داخل التذكرة
 class InsideTicketView(discord.ui.View):
@@ -89,6 +137,7 @@ class InsideTicketView(discord.ui.View):
     @discord.ui.button(label="Claim", style=discord.ButtonStyle.secondary, emoji="💼", custom_id="claim_btn")
     async def claim_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_message(f"💼 تم استلام التذكرة بواسطة المشرف: {interaction.user.mention}")
+
 
 # أزرار لوحة التذاكر الرئيسية
 class TicketView(discord.ui.View):
@@ -116,20 +165,22 @@ class TicketView(discord.ui.View):
         if not category:
             category = await guild.create_category("التذاكر")
 
+        ticket_number = await get_and_increment_ticket_number(guild)
+
         channel = await guild.create_text_channel(
-            name=f"tkt-{ticket_type}-{interaction.user.name}",
+            name=f"tkt-{ticket_type}-{ticket_number}",
             category=category,
             overwrites=overwrites
         )
 
-        await interaction.response.send_message(f"✅ تم فتح تذكرتك بنجاح: {channel.mention}", ephemeral=True)
+        await interaction.response.send_message(f"✅ تم فتح تذكرتك بنجاح (رقم #{ticket_number}): {channel.mention}", ephemeral=True)
         
         support_mentions = " ".join([f"<@&{rid}>" for rid in SUPPORT_ROLE_IDS if guild.get_role(rid)])
         welcome_text = f"{support_mentions} | 🎫 **TICKET STAFF**"
         
         embed = discord.Embed(
-            title=f"تذكرة {ticket_type}",
-            description=f"مرحباً {interaction.user.mention}! تم فتح التذكرة بنجاح. يرجى توضيح مشكلتك أو طلبك وسيتولى فريق العمل خدمتك.",
+            title=f"تذكرة {ticket_type} #{ticket_number}",
+            description=f"مرحباً {interaction.user.mention}! تم فتح التذكرة رقم **{ticket_number}** بنجاح. يرجى توضيح مشكلتك أو طلبك وسيتولى فريق العمل خدمتك.",
             color=0x2b2d31
         )
         await channel.send(content=welcome_text, embed=embed, view=InsideTicketView())
@@ -201,7 +252,7 @@ async def on_ready():
         print(f"Synced {len(synced)} slash commands successfully to guild {GUILD_ID.id}.")
     except Exception as e:
         print(f"Failed to sync slash commands: {e}")
-    print(f'Logged in as {bot.user} successfully, N7Z-Bot is online with Strict Security & Tickets!')
+    print(f'Logged in as {bot.user} successfully, N7Z-Bot is online with Persistent Ticket Counter!')
 
 
 def check_admin_or_streamer(interaction: discord.Interaction) -> bool:
