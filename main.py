@@ -50,7 +50,7 @@ async def get_and_increment_ticket_number(guild: discord.Guild) -> int:
 
     # 2. فحص الرومات المفتوحة حالياً كاحتياط
     for channel in guild.text_channels:
-        match = re.search(r"-(\d+)$", channel.name)
+        match = re.search(r"(?:・|-)(\d+)$", channel.name)
         if match:
             max_num = max(max_num, int(match.group(1)))
 
@@ -58,7 +58,7 @@ async def get_and_increment_ticket_number(guild: discord.Guild) -> int:
     if logs_channel and max_num == 0:
         try:
             async for msg in logs_channel.history(limit=30):
-                msg_match = re.search(r"tkt-[^\s`]+-(\d+)", msg.content)
+                msg_match = re.search(r"🎟️・(\d+)", msg.content)
                 if msg_match:
                     max_num = max(max_num, int(msg_match.group(1)))
         except Exception:
@@ -168,12 +168,12 @@ class TicketView(discord.ui.View):
         ticket_number = await get_and_increment_ticket_number(guild)
 
         channel = await guild.create_text_channel(
-            name=f"tkt-{ticket_type}-{ticket_number}",
+            name=f"🎟️・{ticket_number}",
             category=category,
             overwrites=overwrites
         )
 
-        await interaction.response.send_message(f"✅ تم فتح تذكرتك بنجاح (رقم #{ticket_number}): {channel.mention}", ephemeral=True)
+        await interaction.response.send_message(f"✅ تم فتح تذكرتك بنجاح: {channel.mention}", ephemeral=True)
         
         support_mentions = " ".join([f"<@&{rid}>" for rid in SUPPORT_ROLE_IDS if guild.get_role(rid)])
         welcome_text = f"{support_mentions} | 🎫 **TICKET STAFF**"
@@ -252,7 +252,7 @@ async def on_ready():
         print(f"Synced {len(synced)} slash commands successfully to guild {GUILD_ID.id}.")
     except Exception as e:
         print(f"Failed to sync slash commands: {e}")
-    print(f'Logged in as {bot.user} successfully, N7Z-Bot is online with Persistent Ticket Counter!')
+    print(f'Logged in as {bot.user} successfully, N7Z-Bot is online with Ticket Naming Style!')
 
 
 def check_admin_or_streamer(interaction: discord.Interaction) -> bool:
